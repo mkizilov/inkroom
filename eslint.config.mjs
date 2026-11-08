@@ -5,7 +5,13 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**', '**/drizzle/**'],
+    ignores: [
+      '**/dist/**',
+      '**/coverage/**',
+      '**/node_modules/**',
+      '**/drizzle/**',
+      '.agent-local/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -16,7 +22,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['apps/web/**/*.{ts,tsx}'],
+    files: ['apps/web/**/*.{ts,tsx}', 'apps/web/public/**/*.js'],
     languageOptions: {
       globals: globals.browser,
     },

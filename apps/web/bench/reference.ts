@@ -177,10 +177,7 @@ export function referenceHitTest(object: CanvasObject, point: Point, tolerance: 
       return object.fill ? normalized <= 1 + slack : Math.abs(normalized - 1) <= slack;
     }
     case 'text':
-      return referenceContainsPoint(
-        expandRect(referenceGeometricBounds(object), tolerance),
-        point,
-      );
+      return referenceContainsPoint(expandRect(referenceGeometricBounds(object), tolerance), point);
   }
 }
 

@@ -1,4 +1,3 @@
-/* global self, caches, fetch */
 // Keeps the web app's own files, so the page can open without a connection once it has loaded
 // online. API responses are never cached: board content is kept by the app in IndexedDB instead.
 // See docs/offline.md.
