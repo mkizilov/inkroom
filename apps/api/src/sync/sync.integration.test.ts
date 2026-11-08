@@ -1,9 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import * as Y from 'yjs';
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { SyncClient, encodeSyncUpdate, type AuthUser } from '@inkroom/shared';
-import { createBoard } from '../db/repositories/boards';
-import { addMember } from '../db/repositories/memberships';
+import {
+  SyncClient,
+  decodeClientMessage,
+  encodeSyncUpdate,
+  type AuthUser,
+} from '@inkroom/shared';
+import { createBoard, deleteBoard } from '../db/repositories/boards';
+import { addMember, removeMember, setMemberRole } from '../db/repositories/memberships';
 import { createUser } from '../db/repositories/users';
 import {
   createTestDatabase,
@@ -11,9 +16,15 @@ import {
   testDatabaseUrl,
   type TestDatabase,
 } from '../db/test-database';
-import { PostgresBoardStore } from '../persistence/store';
+import { AuthorizationError, PostgresBoardStore } from '../persistence/store';
 import { CLOSE_INTERNAL_ERROR, CLOSE_POLICY_VIOLATION, type SocketLike } from './connections';
-import { SyncService, type Logger, type OpenResult } from './service';
+import {
+  BOARD_DELETED_REASON,
+  REVOKED_REASON,
+  SyncService,
+  type Logger,
+  type OpenResult,
+} from './service';
 
 // A socket that records what it was sent, so tests can read the frames a client would receive.
 class FakeSocket implements SocketLike {
@@ -55,12 +66,12 @@ const connectionLimits = {
 // A store whose next append can be made to fail, to check that a failed write is not applied.
 class FlakyStore extends PostgresBoardStore {
   failNextAppend = false;
-  override async appendUpdate(boardId: string, authorId: string | null, update: Uint8Array) {
+  override async appendUpdate(boardId: string, actorId: string, update: Uint8Array) {
     if (this.failNextAppend) {
       this.failNextAppend = false;
       throw new Error('simulated write failure');
     }
-    return super.appendUpdate(boardId, authorId, update);
+    return super.appendUpdate(boardId, actorId, update);
   }
 }
 
@@ -131,6 +142,14 @@ describeWithDatabase('board sync service', () => {
     change(doc);
     doc.off('update', record);
     return updates;
+  }
+
+  // The roles a client was told about, in order. The server sends one frame per role change.
+  function roleFrames(socket: FakeSocket): string[] {
+    return socket.sent.flatMap((frame) => {
+      const message = decodeClientMessage(frame, 1024);
+      return message.kind === 'role' ? [message.role] : [];
+    });
   }
 
   it('admits an owner and a viewer, and marks the viewer read-only', async () => {
@@ -303,5 +322,132 @@ describeWithDatabase('board sync service', () => {
     result.connection.markClosed();
 
     expect(service.roomFor(board.id)).toBeUndefined();
+  });
+
+  it('applies a role change to an open connection at once, and tells the client', async () => {
+    const owner = await newUser('Demoting owner');
+    const editor = await newUser('Demoted');
+    const board = await createBoard(database.db, { ownerId: owner.id, title: 'Demotion' });
+    await addMember(database.db, { boardId: board.id, userId: editor.id, role: 'editor' });
+    const socket = new FakeSocket();
+    const join = await service.open({ user: editor, boardId: board.id, socket });
+    if (!join.ok) throw new Error('expected the editor to join');
+
+    await setMemberRole(database.db, { boardId: board.id, userId: editor.id, role: 'viewer' });
+    service.applyMembership(board.id, editor.id, 'viewer');
+    const client = new Y.Doc();
+    client.getMap('objects').set('demoted', 1);
+    await service.receive(join.connection, encodeSyncUpdate(Y.encodeStateAsUpdate(client)));
+
+    expect(join.connection.readOnly).toBe(true);
+    expect(roleFrames(socket)).toEqual(['viewer']);
+    expect(socket.closes).toEqual([]);
+    expect((await store.load(board.id)).getMap('objects').has('demoted')).toBe(false);
+  });
+
+  it('disconnects a removed member at once, with the revoked reason', async () => {
+    const owner = await newUser('Removing owner');
+    const member = await newUser('Removed member');
+    const board = await createBoard(database.db, { ownerId: owner.id, title: 'Removal' });
+    await addMember(database.db, { boardId: board.id, userId: member.id, role: 'viewer' });
+    const socket = new FakeSocket();
+    const join = await service.open({ user: member, boardId: board.id, socket });
+    if (!join.ok) throw new Error('expected the member to join');
+
+    await removeMember(database.db, { boardId: board.id, userId: member.id });
+    service.applyMembership(board.id, member.id, null);
+
+    expect(socket.closes).toEqual([{ code: CLOSE_POLICY_VIOLATION, reason: REVOKED_REASON }]);
+    expect(join.connection.isClosed).toBe(true);
+  });
+
+  it('catches changes made by another process at the next membership check', async () => {
+    const owner = await newUser('Checked owner');
+    const editor = await newUser('Checked editor');
+    const leaver = await newUser('Checked leaver');
+    const board = await createBoard(database.db, { ownerId: owner.id, title: 'Checked' });
+    await addMember(database.db, { boardId: board.id, userId: editor.id, role: 'editor' });
+    await addMember(database.db, { boardId: board.id, userId: leaver.id, role: 'viewer' });
+    const editorSocket = new FakeSocket();
+    const leaverSocket = new FakeSocket();
+    const editorJoin = await service.open({
+      user: editor,
+      boardId: board.id,
+      socket: editorSocket,
+    });
+    const leaverJoin = await service.open({
+      user: leaver,
+      boardId: board.id,
+      socket: leaverSocket,
+    });
+    if (!editorJoin.ok || !leaverJoin.ok) throw new Error('expected both to join');
+
+    // This process is told of neither change, so only the membership check can find them.
+    await setMemberRole(database.db, { boardId: board.id, userId: editor.id, role: 'viewer' });
+    await removeMember(database.db, { boardId: board.id, userId: leaver.id });
+    await service.reconcileMemberships();
+
+    expect(editorJoin.connection.readOnly).toBe(true);
+    expect(roleFrames(editorSocket)).toEqual(['viewer']);
+    expect(leaverSocket.closes).toEqual([{ code: CLOSE_POLICY_VIOLATION, reason: REVOKED_REASON }]);
+  });
+
+  it('disconnects everyone on a board when it is deleted', async () => {
+    const owner = await newUser('Deleting owner');
+    const board = await createBoard(database.db, { ownerId: owner.id, title: 'Doomed' });
+    const socket = new FakeSocket();
+    const join = await service.open({ user: owner, boardId: board.id, socket });
+    if (!join.ok) throw new Error('expected the owner to join');
+
+    await deleteBoard(database.db, board.id);
+    service.boardDeleted(board.id);
+
+    expect(socket.closes).toEqual([{ code: CLOSE_POLICY_VIOLATION, reason: BOARD_DELETED_REASON }]);
+  });
+
+  it('makes the database refuse writes and restores from anyone without the role', async () => {
+    const owner = await newUser('Guarded owner');
+    const viewer = await newUser('Guarded viewer');
+    const editor = await newUser('Guarded editor');
+    const stranger = await newUser('Guarded stranger');
+    const board = await createBoard(database.db, { ownerId: owner.id, title: 'Guarded' });
+    await addMember(database.db, { boardId: board.id, userId: viewer.id, role: 'viewer' });
+    await addMember(database.db, { boardId: board.id, userId: editor.id, role: 'editor' });
+    const change = new Y.Doc();
+    change.getMap('objects').set('guarded', 1);
+    const update = Y.encodeStateAsUpdate(change);
+
+    await expect(store.appendUpdate(board.id, viewer.id, update)).rejects.toBeInstanceOf(
+      AuthorizationError,
+    );
+    await expect(store.appendUpdate(board.id, stranger.id, update)).rejects.toBeInstanceOf(
+      AuthorizationError,
+    );
+    await expect(store.restore(board.id, 1, editor.id)).rejects.toBeInstanceOf(AuthorizationError);
+    expect((await store.load(board.id)).getMap('objects').has('guarded')).toBe(false);
+
+    await store.appendUpdate(board.id, editor.id, update);
+    expect((await store.load(board.id)).getMap('objects').has('guarded')).toBe(true);
+  });
+
+  it('closes an editor whose write the database refuses after its access was removed elsewhere', async () => {
+    const owner = await newUser('Stale owner');
+    const editor = await newUser('Stale editor');
+    const board = await createBoard(database.db, { ownerId: owner.id, title: 'Stale' });
+    await addMember(database.db, { boardId: board.id, userId: editor.id, role: 'editor' });
+    const socket = new FakeSocket();
+    const join = await service.open({ user: editor, boardId: board.id, socket });
+    if (!join.ok) throw new Error('expected the editor to join');
+
+    // The room still holds the editor's old role, so only the database check can refuse this write.
+    await removeMember(database.db, { boardId: board.id, userId: editor.id });
+    const change = new Y.Doc();
+    change.getMap('objects').set('stale', 1);
+    await service.receive(join.connection, encodeSyncUpdate(Y.encodeStateAsUpdate(change)));
+
+    expect(socket.closes).toEqual([
+      { code: CLOSE_POLICY_VIOLATION, reason: 'not permitted to change this board' },
+    ]);
+    expect((await store.load(board.id)).getMap('objects').has('stale')).toBe(false);
   });
 });

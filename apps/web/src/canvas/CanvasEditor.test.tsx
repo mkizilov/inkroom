@@ -272,3 +272,59 @@ describe('CanvasEditor presence', () => {
     expect(screen.getByText('0 participants')).toBeTruthy();
   });
 });
+
+describe('CanvasEditor for a viewer', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const isDisabled = (name: string) =>
+    (screen.getByRole('button', { name }) as HTMLButtonElement).disabled;
+
+  it('disables every control that would change the board, and keeps the view controls', () => {
+    render(<CanvasEditor role="viewer" />);
+
+    for (const name of [
+      'Pen',
+      'Rectangle',
+      'Ellipse',
+      'Line',
+      'Arrow',
+      'Text',
+      'Undo',
+      'Redo',
+      'Duplicate',
+      'Bring forward',
+      'Send backward',
+      'Delete selected',
+    ]) {
+      expect(isDisabled(name)).toBe(true);
+    }
+    expect(isDisabled('Select')).toBe(false);
+    expect(isDisabled('Hand')).toBe(false);
+    expect(isDisabled('Zoom in')).toBe(false);
+    expect(screen.getByText('View only')).toBeTruthy();
+  });
+
+  it('refuses a drawing gesture sent after a tool shortcut, so nothing is added', () => {
+    render(<CanvasEditor role="viewer" />);
+    const surface = screen.getByRole('application', { name: 'Whiteboard canvas' });
+
+    fireEvent.keyDown(window, { key: 'r' });
+    sendPointer(surface, 'pointerdown', 10, 10);
+    sendPointer(surface, 'pointermove', 120, 90);
+    sendPointer(surface, 'pointerup', 120, 90);
+
+    expect(lastSceneProps().objects).toEqual([]);
+    expect(screen.getByRole('button', { name: 'Select' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+  });
+
+  it('leaves controls enabled for an editor', () => {
+    render(<CanvasEditor role="editor" />);
+
+    expect(isDisabled('Rectangle')).toBe(false);
+    expect(screen.queryByText('View only')).toBeNull();
+  });
+});

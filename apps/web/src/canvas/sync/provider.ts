@@ -54,6 +54,8 @@ export interface ProviderOptions {
   minBackoffMs?: number;
   maxBackoffMs?: number;
   onState?: (state: ConnectionState) => void;
+  // Told when the server changes this connection's role on the board.
+  onRole?: (role: string) => void;
 }
 
 const DEFAULT_MIN_BACKOFF_MS = 500;
@@ -87,6 +89,7 @@ export class SyncProvider {
       doc: options.document.doc,
       remoteOrigin: REMOTE_ORIGIN,
       awareness: options.document.awareness,
+      onRole: options.onRole,
     });
   }
 

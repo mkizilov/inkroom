@@ -9,7 +9,13 @@ import {
 } from '@inkroom/shared';
 import type { DbExecutor } from '../db/client';
 import { firstRow } from '../db/rows';
-import { boardSnapshots, users, yjsDocumentUpdates } from '../db/schema';
+import {
+  boardMemberships,
+  boardSnapshots,
+  users,
+  yjsDocumentUpdates,
+  type BoardRole,
+} from '../db/schema';
 
 // Durable storage for board documents. Every board has an append-only log of Yjs updates and a
 // series of snapshots. A snapshot covers every update up to its `upToSeq`, so a board's state is
@@ -33,6 +39,15 @@ export class RevisionNotFoundError extends Error {
   constructor(boardId: string, revision: number) {
     super(`Board ${boardId} has no revision ${revision}.`);
     this.name = 'RevisionNotFoundError';
+  }
+}
+
+// A write or restore from someone whose role does not allow it. The check runs inside the same
+// transaction as the write, under the board lock, so a revocation that committed earlier is seen.
+export class AuthorizationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AuthorizationError';
   }
 }
 
@@ -71,7 +86,7 @@ export interface SweepResult {
 
 export interface BoardStore {
   load(boardId: string): Promise<Y.Doc>;
-  appendUpdate(boardId: string, authorId: string | null, update: Uint8Array): Promise<number>;
+  appendUpdate(boardId: string, actorId: string, update: Uint8Array): Promise<number>;
   compact(boardId: string, hooks?: CompactionHooks): Promise<RevisionMeta | null>;
   compactDue(threshold: number): Promise<SweepResult>;
   listRevisions(boardId: string): Promise<RevisionMeta[]>;
@@ -159,6 +174,24 @@ async function nextRevision(exec: DbExecutor, boardId: string): Promise<number> 
   return Number(row?.current ?? 0) + 1;
 }
 
+// Reads the user's role on the board and refuses unless it is one of the allowed roles. Call it
+// after lockBoard, inside the same transaction as the change it guards.
+async function requireRole(
+  exec: DbExecutor,
+  boardId: string,
+  userId: string,
+  allowed: readonly BoardRole[],
+): Promise<void> {
+  const [row] = await exec
+    .select({ role: boardMemberships.role })
+    .from(boardMemberships)
+    .where(and(eq(boardMemberships.boardId, boardId), eq(boardMemberships.userId, userId)))
+    .limit(1);
+  if (!row || !allowed.includes(row.role)) {
+    throw new AuthorizationError('this user may not change the board');
+  }
+}
+
 function creatorOf(row: { creatorId: string | null; creatorName: string | null }) {
   return row.creatorId !== null && row.creatorName !== null
     ? { id: row.creatorId, displayName: row.creatorName }
@@ -207,10 +240,13 @@ export class PostgresBoardStore implements BoardStore {
     });
   }
 
-  appendUpdate(boardId: string, authorId: string | null, update: Uint8Array): Promise<number> {
+  // Only owners and editors may write. The role is read under the lock, so a change in membership
+  // committed before this write is always seen.
+  appendUpdate(boardId: string, actorId: string, update: Uint8Array): Promise<number> {
     return this.db.transaction(async (tx) => {
       await lockBoard(tx, boardId, 'update');
-      return insertUpdate(tx, boardId, authorId, update);
+      await requireRole(tx, boardId, actorId, ['owner', 'editor']);
+      return insertUpdate(tx, boardId, actorId, update);
     });
   }
 
@@ -306,6 +342,7 @@ export class PostgresBoardStore implements BoardStore {
   restore(boardId: string, revision: number, actorId: string): Promise<RestoreResult> {
     return this.db.transaction(async (tx) => {
       await lockBoard(tx, boardId, 'update');
+      await requireRole(tx, boardId, actorId, ['owner']);
       const target = await findRevision(tx, boardId, revision);
       if (!target) {
         throw new RevisionNotFoundError(boardId, revision);

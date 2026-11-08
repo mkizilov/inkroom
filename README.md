@@ -111,7 +111,8 @@ Run from the repository root.
   hashes, HTTP-only cookies, login rate limiting and an Origin check on writes. See
   [docs/authentication.md](docs/authentication.md).
 - **Boards**: authenticated create, list (keyset-paginated), read, rename and delete, with roles
-  enforced per action and a dashboard in the web app. See [docs/boards.md](docs/boards.md).
+  enforced per action, sharing with registered users, and a dashboard in the web app. See
+  [docs/boards.md](docs/boards.md).
 - **Canvas**: a local react-konva editor with pan and zoom, pen, rectangle, ellipse, line, arrow,
   text, selection, resizing, grouped transforms, copy and paste, layer order, keyboard shortcuts and
   undo and redo. The board is a Yjs document, so edits are transactions with local undo and
@@ -169,9 +170,9 @@ Node 22. The `pnpm-lock.yaml` file must be committed for the frozen install to s
   database connectivity check, Docker Compose PostgreSQL, CI workflow, database schema with
   versioned migrations, repository modules, seed data, integration tests, authentication
   (register, login, logout, current user, session expiry and revocation, rate limiting, CSRF
-  origin checks) with login and registration pages, and board management with a dashboard.
-- Not implemented: a revision browser or restore control in the web app, membership management,
-  live revocation of access, multi-process sync and presence, viewport outlines for other
+  origin checks) with login and registration pages, and board management with a dashboard, and sharing with role-based permissions.
+- Not implemented: a revision browser or restore control in the web app, multi-process sync and
+  presence, viewport outlines for other
   participants, OAuth or social sign-in, email verification, password reset, production Docker
   images.
 

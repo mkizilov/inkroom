@@ -6,6 +6,7 @@ import { describeError } from '../auth/messages';
 import { fetchBoard } from '../boards/api';
 import { roleLabels } from '../boards/format';
 import { CanvasEditor } from '../canvas/CanvasEditor';
+import { SharingPanel } from '../sharing/SharingPanel';
 
 type BoardState =
   | { kind: 'loading' }
@@ -56,9 +57,15 @@ export function BoardPage() {
               <p>Your role: {roleLabels[state.board.role]}</p>
             </div>
           </header>
+          <SharingPanel
+            boardId={state.board.id}
+            role={state.board.role}
+            currentUserId={auth.status === 'authenticated' ? auth.user.id : undefined}
+          />
           <section aria-label="Whiteboard" className="workspace">
             <CanvasEditor
               boardId={state.board.id}
+              role={state.board.role}
               user={
                 auth.status === 'authenticated'
                   ? { id: auth.user.id, name: auth.user.displayName }

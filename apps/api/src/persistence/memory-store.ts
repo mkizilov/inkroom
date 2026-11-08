@@ -25,11 +25,7 @@ export class MemoryBoardStore implements BoardStore {
     return doc;
   }
 
-  async appendUpdate(
-    boardId: string,
-    _authorId: string | null,
-    update: Uint8Array,
-  ): Promise<number> {
+  async appendUpdate(boardId: string, _actorId: string, update: Uint8Array): Promise<number> {
     if (this.failNextAppends > 0) {
       this.failNextAppends -= 1;
       throw new Error('simulated write failure');

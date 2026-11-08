@@ -85,6 +85,43 @@ export const revisionParamsSchema = z.object({
 });
 
 export type Revision = z.infer<typeof revisionSchema>;
+
+// Roles a member can be given. Ownership is not granted: a board has exactly one owner, who is
+// fixed at creation, so invitations and role changes can only name these two.
+export const grantableRoleSchema = z.enum(['editor', 'viewer']);
+export type GrantableRole = z.infer<typeof grantableRoleSchema>;
+
+export const memberSchema = z.object({
+  userId: z.string().uuid(),
+  displayName: z.string(),
+  role: boardRoleSchema,
+  // Shown to the owner only, so members cannot harvest one another's addresses.
+  email: z.string().nullable(),
+});
+
+export const memberListSchema = z.object({
+  items: z.array(memberSchema),
+});
+
+export const memberResponseSchema = z.object({
+  member: memberSchema,
+});
+
+export const inviteMemberSchema = z.object({
+  email: z.string().trim().toLowerCase().max(254).email('Enter a valid email address.'),
+  role: grantableRoleSchema,
+});
+
+export const changeMemberRoleSchema = z.object({
+  role: grantableRoleSchema,
+});
+
+export const memberParamsSchema = z.object({
+  boardId: z.string().uuid(),
+  userId: z.string().uuid(),
+});
+
+export type Member = z.infer<typeof memberSchema>;
 export type BoardRole = z.infer<typeof boardRoleSchema>;
 export type Board = z.infer<typeof boardSchema>;
 export type BoardPage = z.infer<typeof boardPageSchema>;

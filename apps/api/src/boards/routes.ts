@@ -19,12 +19,14 @@ import {
 import type { boards } from '../db/schema';
 import { AppError } from '../http/errors';
 import { parseBody, parseParams, parseQuery } from '../http/validation';
+import type { SyncService } from '../sync/service';
 import { authorizeBoard } from './access';
 import { decodeCursor, encodeCursor } from './pagination';
 
 export interface BoardRouteOptions {
   db: DbExecutor;
   requireUser: (request: FastifyRequest) => Promise<void>;
+  sync: SyncService;
 }
 
 type BoardRow = typeof boards.$inferSelect;
@@ -41,7 +43,7 @@ function toBoard(row: BoardRow, role: BoardRole): Board {
 }
 
 export function registerBoardRoutes(app: FastifyInstance, options: BoardRouteOptions): void {
-  const { db, requireUser } = options;
+  const { db, requireUser, sync } = options;
 
   app.post('/api/boards', { preHandler: requireUser }, async (request, reply) => {
     const user = currentUserOf(request);
@@ -95,6 +97,8 @@ export function registerBoardRoutes(app: FastifyInstance, options: BoardRouteOpt
     if (!deleted) {
       throw new AppError(404, 'board_not_found', 'Board not found.');
     }
+    // Everyone editing the board is disconnected at once, rather than on their next write.
+    sync.boardDeleted(boardId);
     return reply.code(204).send();
   });
 }

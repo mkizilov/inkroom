@@ -19,6 +19,8 @@ export interface SyncClientOptions {
   remoteOrigin: unknown;
   // Receives remote presence. Optional, so a client without presence still syncs documents.
   awareness?: Awareness;
+  // Told when the server changes this connection's role, so the UI can match what is allowed.
+  onRole?: (role: string) => void;
 }
 
 export class SyncClient {
@@ -27,11 +29,13 @@ export class SyncClient {
   acknowledgedSeq = 0;
   private readonly remoteOrigin: unknown;
   private readonly awareness: Awareness | undefined;
+  private readonly onRole: ((role: string) => void) | undefined;
 
   constructor(options: SyncClientOptions) {
     this.doc = options.doc;
     this.remoteOrigin = options.remoteOrigin;
     this.awareness = options.awareness;
+    this.onRole = options.onRole;
   }
 
   // The first frame a client sends on a fresh connection: its state vector, so the server can
@@ -49,6 +53,10 @@ export class SyncClient {
     }
     if (message.kind === 'ack') {
       this.acknowledgedSeq = Math.max(this.acknowledgedSeq, message.seq);
+      return [];
+    }
+    if (message.kind === 'role') {
+      this.onRole?.(message.role);
       return [];
     }
     switch (message.sync.kind) {

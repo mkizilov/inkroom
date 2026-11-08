@@ -223,3 +223,77 @@ describe('two connected sessions', () => {
     expect(a.getState().objects).toHaveLength(2);
   });
 });
+
+describe('editor session in read-only mode', () => {
+  it('refuses edits sent to it directly, even ones that would otherwise succeed', () => {
+    const session = new EditorSession();
+    drawRectangle(session, { x: 0, y: 0 }, { x: 100, y: 60 }, 1);
+    const before = session.document.snapshot();
+    expect(before).toHaveLength(1);
+
+    session.setReadOnly(true);
+    act(
+      session,
+      { type: 'setTool', tool: 'rectangle' },
+      { type: 'deleteSelected' },
+      { type: 'nudge', dx: 5, dy: 5 },
+      { type: 'duplicate', makeId: () => uuid(7) },
+      { type: 'cut' },
+      { type: 'reorder', direction: 'front' },
+      { type: 'undo' },
+      { type: 'paste', makeId: () => uuid(8) },
+      { type: 'doubleClick', screen: { x: 10, y: 10 } },
+    );
+
+    expect(session.document.snapshot()).toEqual(before);
+    expectConsistent(session);
+    expect(session.getState().tool).toBe('select');
+  });
+
+  it('refuses a pointer gesture that would draw, and writes nothing', () => {
+    const session = new EditorSession();
+    session.setReadOnly(true);
+
+    act(
+      session,
+      { type: 'pointerDown', screen: { x: 10, y: 10 }, button: 0, shift: false, id: uuid(1) },
+      { type: 'pointerMove', screen: { x: 120, y: 90 } },
+      { type: 'pointerUp' },
+    );
+
+    expect(session.document.snapshot()).toEqual([]);
+    expect(session.getState().draft).toBeNull();
+    expectConsistent(session);
+  });
+
+  it('still lets a viewer pan and zoom', () => {
+    const session = new EditorSession();
+    drawRectangle(session, { x: 0, y: 0 }, { x: 100, y: 60 }, 1);
+    session.setReadOnly(true);
+    const start = session.getState().viewport;
+
+    act(
+      session,
+      { type: 'setTool', tool: 'pan' },
+      { type: 'pointerDown', screen: { x: 0, y: 0 }, button: 0, shift: false, id: uuid(9) },
+      { type: 'pointerMove', screen: { x: 50, y: 20 } },
+      { type: 'pointerUp' },
+      { type: 'zoom', factor: 2, anchor: { x: 0, y: 0 } },
+    );
+
+    expect(session.getState().viewport).not.toEqual(start);
+    expectConsistent(session);
+    expect(session.document.snapshot()).toHaveLength(1);
+  });
+
+  it('accepts edits again once the session is made writable', () => {
+    const session = new EditorSession();
+    session.setReadOnly(true);
+    session.setReadOnly(false);
+
+    drawRectangle(session, { x: 0, y: 0 }, { x: 100, y: 60 }, 1);
+
+    expectConsistent(session);
+    expect(session.document.snapshot()).toHaveLength(1);
+  });
+});

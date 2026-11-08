@@ -41,6 +41,8 @@ A board object is:
 | Read metadata     |  yes  |  yes   |  yes   |  404       |
 | Rename            |  yes  |  yes   |  403   |  404       |
 | Delete            |  yes  |  403   |  403   |  404       |
+| Manage members    |  yes  |  403   |  403   |  404       |
+| Leave the board   |  no (409) |  yes  |  yes  |  n/a   |
 
 - Only the owner can delete a board. The owner's membership row cannot be removed or demoted by
   the repository functions (see [database.md](database.md)).
@@ -49,8 +51,28 @@ A board object is:
 - Members who lack the role for an action get `403 forbidden`.
 - Creating a board writes the board and its `owner` membership in one transaction.
 
-Membership management (inviting people, changing roles) is not implemented yet. Until it is,
-the only way to create a non-owner membership is through the database functions.
+Other people get access through the sharing endpoints below.
+
+## Sharing
+
+Owners give registered users access to a board. Each endpoint needs a session cookie and passes the
+same origin check as the other writes.
+
+| Method | Path                                   | Minimum role                         | Success            | Error codes                                                                 |
+| ------ | -------------------------------------- | ------------------------------------ | ------------------ | --------------------------------------------------------------------------- |
+| GET    | `/api/boards/:boardId/members`         | viewer                               | `200` `{ items }`  | `board_not_found` 404                                                       |
+| POST   | `/api/boards/:boardId/members`         | owner                                | `201` `{ member }` | `validation_failed` 400, `user_not_found` 404, `already_member` 409, `forbidden` 403 |
+| PATCH  | `/api/boards/:boardId/members/:userId` | owner                                | `200` `{ member }` | `validation_failed` 400, `member_not_found` 404, `owner_role_fixed` 409, `forbidden` 403 |
+| DELETE | `/api/boards/:boardId/members/:userId` | owner, or the member themself (leave) | `204`             | `member_not_found` 404, `owner_cannot_leave` 409, `forbidden` 403           |
+
+- An invitation names an account by email, which is case-insensitive. An address with no account
+  gets `404 user_not_found`; there are no invitations for people who have not signed up.
+- Only `editor` and `viewer` can be granted. Ownership is fixed at creation: an invitation or role
+  change cannot grant it, and the owner cannot be demoted, removed or leave.
+- Email addresses are returned only to the owner. Other members see names and roles.
+- A non-member gets `404 board_not_found` on every endpoint, the same as a missing board.
+- Role changes and removals reach the people already connected to the board at once. See
+  [sync.md](sync.md#changes-to-access-during-a-session).
 
 ## Listing and pagination
 
@@ -97,6 +119,12 @@ before sending it.
   listing scoped to membership, pagination (including identical timestamps and the default page
   size), validation, metadata for each role, non-member 404s, rename and delete permissions,
   already-deleted boards, origin checks on delete, and unauthenticated access.
+- `apps/api/src/boards/members.integration.test.ts` (needs `TEST_DATABASE_URL`): invitations and their
+  errors, the owner-only rules, bypass attempts through each route (viewers and editors changing or
+  deleting the board, cross-site invitations), who sees emails, role changes and removals taking
+  effect on the next request, and leaving.
+- `apps/web/src/sharing/SharingPanel.test.tsx`: owner and viewer controls, malformed addresses refused
+  before any request, role changes sent to the server, and server refusals shown to the user.
 - `apps/web/src/App.test.tsx`: dashboard states (loading, empty, error with retry), role-based
   actions and dates, create validation, inline rename and cancel, confirmed delete and its errors,
   load more, and opening a board.
@@ -106,5 +134,3 @@ before sending it.
 - Opening a board does not load any content yet; the workspace is a placeholder.
 - No board archive, duplication or restore. Delete is permanent and cascades to memberships,
   updates and snapshots.
-- No membership management endpoints, so the `editor` and `viewer` roles can only be assigned
-  through the database functions for now.

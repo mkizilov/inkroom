@@ -3,7 +3,7 @@ import type { DbExecutor } from '../db/client';
 import { getBoardRole } from '../db/repositories/boards';
 import { AppError } from '../http/errors';
 
-export type BoardAction = 'read' | 'rename' | 'delete' | 'restore';
+export type BoardAction = 'read' | 'rename' | 'delete' | 'restore' | 'manage_members';
 
 const allowedRoles: Record<BoardAction, readonly BoardRole[]> = {
   read: ['owner', 'editor', 'viewer'],
@@ -11,6 +11,9 @@ const allowedRoles: Record<BoardAction, readonly BoardRole[]> = {
   delete: ['owner'],
   // Restoring replaces the board's content for everyone, so only the owner may do it.
   restore: ['owner'],
+  // Inviting, changing roles and removing other members is the owner's alone. Leaving the board is
+  // handled separately, since any member may leave.
+  manage_members: ['owner'],
 };
 
 // Non-members get 404, the same as a missing board, so board ids cannot be probed. Members who

@@ -2,6 +2,8 @@ import type { ConnectionState } from './sync/provider';
 import type { Participant } from './presence/participants';
 import type { Tool } from './editor';
 
+const VIEWER_TOOLS: ReadonlyArray<Tool> = ['select', 'pan'];
+
 const TOOL_BUTTONS: ReadonlyArray<{ tool: Tool; label: string; shortcut: string }> = [
   { tool: 'select', label: 'Select', shortcut: 'V' },
   { tool: 'pan', label: 'Hand', shortcut: 'H' },
@@ -34,6 +36,7 @@ interface ToolbarProps {
   canRedo: boolean;
   participants: readonly Participant[];
   connection: ConnectionDisplay;
+  readOnly: boolean;
   onToolChange: (tool: Tool) => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -55,6 +58,7 @@ export function Toolbar({
   canRedo,
   participants,
   connection,
+  readOnly,
   onToolChange,
   onZoomIn,
   onZoomOut,
@@ -75,6 +79,7 @@ export function Toolbar({
             type="button"
             aria-pressed={tool === button.tool}
             title={`${button.label} (${button.shortcut})`}
+            disabled={readOnly && !VIEWER_TOOLS.includes(button.tool)}
             onClick={() => onToolChange(button.tool)}
           >
             {button.label}
@@ -93,13 +98,18 @@ export function Toolbar({
         </button>
       </div>
       <div className="toolbar" role="toolbar" aria-label="Editing">
-        <button type="button" onClick={onUndo} disabled={!canUndo} title="Undo (Ctrl + Z)">
+        <button
+          type="button"
+          onClick={onUndo}
+          disabled={readOnly || !canUndo}
+          title="Undo (Ctrl + Z)"
+        >
           Undo
         </button>
         <button
           type="button"
           onClick={onRedo}
-          disabled={!canRedo}
+          disabled={readOnly || !canRedo}
           title="Redo (Ctrl + Shift + Z)"
         >
           Redo
@@ -108,7 +118,7 @@ export function Toolbar({
         <button
           type="button"
           onClick={onDuplicate}
-          disabled={!canEditSelection}
+          disabled={readOnly || !canEditSelection}
           title="Duplicate (Ctrl + D)"
         >
           Duplicate
@@ -116,7 +126,7 @@ export function Toolbar({
         <button
           type="button"
           onClick={onBringForward}
-          disabled={!canEditSelection}
+          disabled={readOnly || !canEditSelection}
           title="Bring forward (Ctrl + ])"
         >
           Bring forward
@@ -124,12 +134,12 @@ export function Toolbar({
         <button
           type="button"
           onClick={onSendBackward}
-          disabled={!canEditSelection}
+          disabled={readOnly || !canEditSelection}
           title="Send backward (Ctrl + [)"
         >
           Send backward
         </button>
-        <button type="button" onClick={onDelete} disabled={!canEditSelection}>
+        <button type="button" onClick={onDelete} disabled={readOnly || !canEditSelection}>
           Delete selected
         </button>
         <p role="status" aria-label="Canvas status" className="canvas-status">
@@ -140,6 +150,7 @@ export function Toolbar({
         <output aria-label="Connection status" className={`connection connection-${connection}`}>
           {CONNECTION_LABELS[connection]}
         </output>
+        {readOnly && <span className="view-only">View only</span>}
         <ul aria-label="Participants" className="participants">
           {participants.map((participant) => (
             <li key={participant.clientId} data-testid="participant" className="participant">

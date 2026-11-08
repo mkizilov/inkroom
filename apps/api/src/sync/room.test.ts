@@ -5,6 +5,7 @@ import {
   SyncClient,
   encodeAck,
   encodeAwareness,
+  encodeRole,
   encodeSyncUpdate,
   readOrderedObjects,
 } from '@inkroom/shared';
@@ -410,6 +411,31 @@ describe('read-only connections', () => {
     await viewer?.edit((doc) => doc.getMap('objects').set('nope', textObject('n', 'x')));
 
     expect(room.has('viewer')).toBe(true);
+  });
+
+  it('keep a viewer connected when it reconnects holding a deletion', async () => {
+    const store = new MemoryBoardStore();
+    const room = makeRoom(store);
+    const [editor, viewer] = await connectAll(room, ['editor', 'viewer'], ['viewer']);
+    await editor?.edit((doc) => doc.getMap('objects').set('a', textObject('a', 'shared')));
+    await editor?.edit((doc) => doc.getMap('objects').delete('a'));
+    await settle(editor as Peer, viewer as Peer);
+    const stored = store.updates.get(BOARD)?.length;
+
+    room.leave('viewer');
+    await (viewer as Peer).connect();
+    await settle(viewer as Peer);
+
+    expect(room.has('viewer')).toBe(true);
+    expect(viewer?.objectIds()).toEqual([]);
+    expect(store.updates.get(BOARD)?.length).toBe(stored);
+  });
+
+  it('refuses a client that sends its own role change', async () => {
+    const room = makeRoom(new MemoryBoardStore());
+    room.join(new FakeConnection('a', 'a'));
+
+    await expect(room.receive('a', encodeRole('editor'))).rejects.toThrow(/role/);
   });
 });
 

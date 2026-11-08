@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import type { Point, TextObject } from '@inkroom/shared';
+import { boardRoleSchema, type BoardRole, type Point, type TextObject } from '@inkroom/shared';
 import { CanvasScene } from './CanvasScene';
 import { TOOL_SHORTCUTS, type EditorAction } from './editor';
 import { PresenceOverlay } from './presence/PresenceOverlay';
@@ -86,7 +86,15 @@ function pinchFrom(points: Point[]): PinchSample | null {
   return first && second ? pinchSample(first, second) : null;
 }
 
-export function CanvasEditor({ boardId, user }: { boardId?: string; user?: PresenceUserInfo }) {
+export function CanvasEditor({
+  boardId,
+  user,
+  role,
+}: {
+  boardId?: string;
+  user?: PresenceUserInfo;
+  role?: BoardRole;
+}) {
   // The session owns the document (a Yjs document) for this editor instance. The view and the
   // document stay in step through the session; see session.ts.
   const [session] = useState(() => new EditorSession());
@@ -95,6 +103,9 @@ export function CanvasEditor({ boardId, user }: { boardId?: string; user?: Prese
   const awareness = session.document.awareness;
   const participants = useParticipants(awareness);
   const [connection, setConnection] = useState<ConnectionDisplay>(boardId ? 'connecting' : 'local');
+  // Starts from the role the board page loaded, and follows the server if it changes while open.
+  const [currentRole, setCurrentRole] = useState<BoardRole | undefined>(role);
+  const readOnly = currentRole === 'viewer';
   const presenceRef = useRef<PresenceController | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const pointersRef = useRef(new Map<number, Point>());
@@ -102,6 +113,10 @@ export function CanvasEditor({ boardId, user }: { boardId?: string; user?: Prese
   const [size, setSize] = useState({ width: 800, height: 600 });
   const userId = user?.id;
   const userName = user?.name;
+
+  useEffect(() => {
+    session.setReadOnly(readOnly);
+  }, [session, readOnly]);
 
   // Connects the document to the board's sync endpoint while the editor is mounted. Without a board
   // id the editor is local only, as in the standalone tests.
@@ -113,6 +128,12 @@ export function CanvasEditor({ boardId, user }: { boardId?: string; user?: Prese
       document: session.document,
       url: boardSyncUrl(boardId, window.location),
       onState: (state: ConnectionState) => setConnection(state),
+      onRole: (next: string) => {
+        const parsed = boardRoleSchema.safeParse(next);
+        if (parsed.success) {
+          setCurrentRole(parsed.data);
+        }
+      },
       // The browser socket has the same members the provider uses; its event handler types are
       // wider, so the adapter is a cast at this single point.
       createSocket: (url) => new WebSocket(url) as unknown as SocketLike,
@@ -327,6 +348,7 @@ export function CanvasEditor({ boardId, user }: { boardId?: string; user?: Prese
         canRedo={state.undoState.canRedo}
         participants={participants}
         connection={connection}
+        readOnly={readOnly}
         onToolChange={(tool) => dispatch({ type: 'setTool', tool })}
         onZoomIn={() => dispatch({ type: 'zoom', factor: ZOOM_STEP, anchor: center })}
         onZoomOut={() => dispatch({ type: 'zoom', factor: 1 / ZOOM_STEP, anchor: center })}

@@ -5,6 +5,7 @@ import { createRequireUser } from './auth/middleware';
 import { createFailureLimiter } from './auth/rate-limit';
 import { registerAuthRoutes } from './auth/routes';
 import { registerBoardRoutes } from './boards/routes';
+import { registerMemberRoutes } from './boards/member-routes';
 import { registerRevisionRoutes } from './boards/revisions';
 import type { Database } from './db/client';
 import { registerErrorHandlers } from './http/errors';
@@ -41,7 +42,10 @@ export interface BuildAppOptions {
   compactEvery?: number;
   sweepThreshold?: number;
   sweepIntervalMs?: number;
-  // Starts the heartbeat and the compaction sweep. Tests turn these off and drive them directly.
+  // Interval for re-reading open connections' memberships. Zero disables it.
+  membershipCheckMs?: number;
+  // Starts the heartbeat, the compaction sweep and the membership check. Tests turn these off and
+  // drive them directly.
   startHeartbeat?: boolean;
 }
 
@@ -63,6 +67,7 @@ export async function buildApp(options: BuildAppOptions): Promise<InkRoomApp> {
     compactEvery,
     sweepThreshold,
     sweepIntervalMs,
+    membershipCheckMs,
     startHeartbeat = true,
   } = options;
   const limits = { ...DEFAULT_LOGIN_RATE_LIMITS, ...loginRateLimits };
@@ -109,8 +114,6 @@ export async function buildApp(options: BuildAppOptions): Promise<InkRoomApp> {
     },
   });
 
-  registerBoardRoutes(app, { db: database.db, requireUser });
-
   const store = new PostgresBoardStore(database.db, (boardId, seq, error) => {
     app.log.warn({ err: error, boardId, seq }, 'skipped an unreadable stored update');
   });
@@ -122,14 +125,19 @@ export async function buildApp(options: BuildAppOptions): Promise<InkRoomApp> {
     compactEvery,
     sweepThreshold,
     sweepIntervalMs,
+    membershipCheckMs,
     logger: app.log,
   });
+
+  registerBoardRoutes(app, { db: database.db, requireUser, sync });
+  registerMemberRoutes(app, { db: database.db, sync, requireUser });
   registerSyncRoutes(app, { db: database.db, service: sync, webOrigin, cookieSecure });
   registerRevisionRoutes(app, { db: database.db, store, sync, requireUser });
 
   if (startHeartbeat) {
     sync.startHeartbeat();
     sync.startSweep();
+    sync.startMembershipCheck();
   }
   app.addHook('onClose', async () => {
     await sync.shutdown();

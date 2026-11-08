@@ -46,10 +46,26 @@ changes through the same handshake, so nothing is queued on the client.
 
 - **Owner and editor** connections apply their updates to the room and receive everyone else's.
 - **Viewer** connections receive the document. Their step 2 and update frames are dropped without
-  effect, and the connection stays open, so a viewer's client does not reconnect in a loop.
+  effect, and the connection stays open, so a viewer's client does not reconnect in a loop. A
+  viewer's reconnect reply can carry only a delete set (Yjs always includes one), so refusing such
+  frames would disconnect every viewer of a board that has had a deletion.
+- **The database checks again.** Each stored update and each restore re-reads the writer's role
+  inside the transaction that holds the board lock. A write from someone who is no longer an owner
+  or editor fails, and the room closes that connection with 1008.
 
-The browser also hides editing from viewers, so this only matters for a client that ignores the
+The canvas refuses edits from a viewer, so this drop is a backstop for a client that ignores the
 UI. See the viewer-echo limit below.
+
+## Changes to access during a session
+
+- A **role change** is applied to the open connection at once. The server sends a role frame
+  (`MESSAGE_ROLE`, 3), so the browser becomes read-only without reconnecting.
+- **Removing a member** closes their connections with 1008 and the reason `access revoked`.
+  **Deleting the board** closes every connection with the reason `board was deleted`. The browser
+  stops rather than retrying on 1008.
+- A change made by **another process** is not pushed. Each open connection's role is re-read every
+  30 seconds (`membershipCheckMs` in `buildApp`, started with the heartbeat), so such a change takes
+  effect within that interval. Writes are checked against the database in the meantime.
 
 ## Limits
 
@@ -97,7 +113,8 @@ on a new connection is the client's state vector.
 - `apps/api/src/sync/sync.integration.test.ts` (needs `TEST_DATABASE_URL`): owner and viewer
   admission, the same answer for non-members and missing boards, the per-user budget and its
   release, two clients converging through the service, an oversized frame closing only its sender,
-  and removal from the room when a socket is gone.
+  removal from the room when a socket is gone, role changes and removals applied to open connections
+  (including the membership check), board deletion, and the database refusing writes from non-editors.
 - `apps/web/src/canvas/sync/provider.test.ts`: the handshake, local changes sent as they are made,
   backoff growth and its cap, the reset after a successful open, offline status, stopping on 1008,
   stopping on `stop()`, and offline changes carried by the reconnect handshake.
@@ -113,13 +130,12 @@ on a new connection is the client's state vector.
 - **Authentication is checked after the upgrade.** `@fastify/websocket` runs the handler after the
   socket is open, so an unauthenticated client gets an open socket that is closed with 1008 before
   any board data is sent. Rejecting the upgrade itself would need a `verifyClient` hook.
-- **Role changes and deletion are not pushed to live connections.** A connection keeps the role it
-  had when it joined. A removed member, or a board that is deleted, stays connected until it
-  reconnects. Closing affected connections on membership changes is the next step, and it needs
-  membership management first.
-- **Viewer echo.** A viewer's own copy keeps any local edit it makes, because nothing reverts it on
-  the client. The server drops the write, so other users never see it, but the viewer's view can
-  differ from the board until it reloads. The browser should block editing for viewers outright.
+- **Changes made by another process take up to the check interval.** Changes made in this process
+  apply at once. A change made elsewhere reaches an open connection within the 30-second membership
+  check, and until then every write is still checked against the database.
+- **Viewer echo.** The canvas refuses a viewer's edits, so a viewer's copy changes only through a
+  client that ignores the UI. The server drops such a write, so other users never see it, but that
+  copy can differ from the board until it reloads.
 - **Single process.** Rooms and connection counts live in one process's memory. Several API
   instances would each hold a separate room for the same board, so horizontal scaling needs a
   shared broadcast layer (for example Redis or Postgres notifications).

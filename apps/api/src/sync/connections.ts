@@ -1,3 +1,4 @@
+import { encodeRole, type BoardRole } from '@inkroom/shared';
 import type { RoomConnection } from './room';
 
 // The part of a WebSocket that the sync service uses. The Fastify route adapts a real socket to
@@ -41,11 +42,15 @@ export const CLOSE_TRY_AGAIN_LATER = 1013;
 
 // One WebSocket connection's state, from accept to close. The transport calls `receive` for each
 // frame, `pong` when the client answers a ping, and `closed` when the socket goes away.
+//
+// The role is held here and can change while the connection is open. A change is applied at once:
+// writes are refused from that moment, and the client is told its new role. Revocation closes the
+// connection (see SyncService).
 export class SyncConnection implements RoomConnection {
   readonly id: string;
   readonly userId: string;
   readonly boardId: string;
-  readonly readOnly: boolean;
+  private currentRole: BoardRole;
   private readonly socket: SocketLike;
   private readonly limits: ConnectionLimits;
   private readonly now: () => number;
@@ -57,7 +62,7 @@ export class SyncConnection implements RoomConnection {
     id: string;
     userId: string;
     boardId: string;
-    readOnly: boolean;
+    role: BoardRole;
     socket: SocketLike;
     limits: ConnectionLimits;
     now: () => number;
@@ -66,7 +71,7 @@ export class SyncConnection implements RoomConnection {
     this.id = options.id;
     this.userId = options.userId;
     this.boardId = options.boardId;
-    this.readOnly = options.readOnly;
+    this.currentRole = options.role;
     this.socket = options.socket;
     this.limits = options.limits;
     this.now = options.now;
@@ -74,8 +79,27 @@ export class SyncConnection implements RoomConnection {
     this.lastPongAt = options.now();
   }
 
+  get role(): BoardRole {
+    return this.currentRole;
+  }
+
+  // Viewers may receive the document and presence, but never change it.
+  get readOnly(): boolean {
+    return this.currentRole === 'viewer';
+  }
+
   get isClosed(): boolean {
     return this.closedFlag;
+  }
+
+  // Applies a new role and tells the client. Returns false when the role did not change.
+  setRole(role: BoardRole): boolean {
+    if (role === this.currentRole || this.closedFlag) {
+      return false;
+    }
+    this.currentRole = role;
+    this.send(encodeRole(role));
+    return true;
   }
 
   // Returns false once the socket is closed or its outgoing buffer is past the limit. The room

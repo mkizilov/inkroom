@@ -10,6 +10,9 @@ export const MESSAGE_AWARENESS = 1;
 // Server-to-client only: the update with this sequence number is stored durably. This is an
 // InkRoom extension; y-protocols does not define it.
 export const MESSAGE_ACK = 2;
+// Server-to-client only: the connection's current role on the board. Sent when the role changes
+// while the connection is open, so the editor can switch to read-only without reconnecting.
+export const MESSAGE_ROLE = 3;
 
 export const SYNC_STEP1 = 0;
 export const SYNC_STEP2 = 1;
@@ -107,7 +110,8 @@ export type SyncMessage =
 export type ClientMessage =
   | { kind: 'sync'; sync: SyncMessage }
   | { kind: 'awareness'; update: Uint8Array }
-  | { kind: 'ack'; seq: number };
+  | { kind: 'ack'; seq: number }
+  | { kind: 'role'; role: string };
 
 export function encodeSyncStep1(stateVector: Uint8Array): Uint8Array {
   const encoder = new Encoder();
@@ -130,6 +134,13 @@ export function encodeSyncUpdate(update: Uint8Array): Uint8Array {
   encoder.writeVarUint(MESSAGE_SYNC);
   encoder.writeVarUint(SYNC_UPDATE);
   encoder.writeVarBytes(update);
+  return encoder.toUint8Array();
+}
+
+export function encodeRole(role: string): Uint8Array {
+  const encoder = new Encoder();
+  encoder.writeVarUint(MESSAGE_ROLE);
+  encoder.writeVarBytes(new TextEncoder().encode(role));
   return encoder.toUint8Array();
 }
 
@@ -178,6 +189,10 @@ function readMessage(decoder: Decoder, maxPayloadBytes: number): ClientMessage {
 
   if (outer === MESSAGE_AWARENESS) {
     return { kind: 'awareness', update: decoder.readVarBytes(maxPayloadBytes) };
+  }
+
+  if (outer === MESSAGE_ROLE) {
+    return { kind: 'role', role: new TextDecoder().decode(decoder.readVarBytes(64)) };
   }
 
   if (outer === MESSAGE_ACK) {

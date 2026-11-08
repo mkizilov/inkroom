@@ -218,6 +218,8 @@ export class Room {
       }
       case 'ack':
         throw new ProtocolError('clients may not send acknowledgements');
+      case 'role':
+        throw new ProtocolError('clients may not change their own role');
       case 'sync':
         break;
     }
@@ -232,7 +234,9 @@ export class Room {
     }
     if (from.readOnly) {
       // Viewers can read but not change the document. Their writes are discarded and the connection
-      // stays open, so a viewer's client does not reconnect in a loop.
+      // stays open, so a viewer's client does not reconnect in a loop. This must not refuse: a step-2
+      // reply carries the client's whole delete set even when it adds nothing, so refusing it would
+      // close every viewer whose document has seen a deletion.
       return;
     }
     await this.commit(subscriber, sync.update);
@@ -248,7 +252,6 @@ export class Room {
       // Nothing new in this update, so there is nothing to store.
       return;
     }
-
     // If this rejects, nothing has been applied or sent, and the client still holds the update. It
     // is sent again on its next connection, through the state-vector handshake.
     const seq = await this.options.store.appendUpdate(this.boardId, connection.userId, update);

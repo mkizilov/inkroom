@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { ProtocolError, type AuthUser } from '@inkroom/shared';
+import { ProtocolError, type AuthUser, type BoardRole } from '@inkroom/shared';
 import type { DbExecutor } from '../db/client';
 import { getBoardRole } from '../db/repositories/boards';
-import { BoardNotFoundError, type BoardStore } from '../persistence/store';
+import { AuthorizationError, BoardNotFoundError, type BoardStore } from '../persistence/store';
 import {
   CLOSE_GOING_AWAY,
   CLOSE_INTERNAL_ERROR,
@@ -15,6 +15,9 @@ import {
 } from './connections';
 import { RoomRegistry } from './registry';
 import { DEFAULT_ROOM_LIMITS, type RoomLimits } from './room';
+
+export const REVOKED_REASON = 'access revoked';
+export const BOARD_DELETED_REASON = 'board was deleted';
 
 export interface Logger {
   error(obj: object, message: string): void;
@@ -36,6 +39,9 @@ export interface SyncServiceOptions {
   sweepThreshold?: number;
   // Interval for the sweep. Default 5 minutes. Zero disables the sweep.
   sweepIntervalMs?: number;
+  // How often every open connection's membership is re-read from the database. This is what picks
+  // up changes made by another process. Default 30 seconds. Zero disables it.
+  membershipCheckMs?: number;
   logger: Logger;
   now?: () => number;
 }
@@ -43,6 +49,12 @@ export interface SyncServiceOptions {
 // Owns every live sync connection. The Fastify route authenticates the user and calls `open`;
 // frames, pongs and closes then go through this service. Background work (compaction) is tracked
 // here so shutdown can wait for it.
+//
+// Permissions are enforced in three places. The database checks the writer's role inside each
+// write, so a revoked user cannot write even from a process that has not heard of the change. The
+// room drops changes from read-only connections. And this service keeps each open connection's
+// role current: a change made in this process is applied at once, and a periodic reconcile catches
+// changes made elsewhere.
 export class SyncService {
   private readonly db: DbExecutor;
   private readonly store: BoardStore;
@@ -54,9 +66,11 @@ export class SyncService {
   private readonly now: () => number;
   private readonly sweepThreshold: number;
   private readonly sweepIntervalMs: number;
+  private readonly membershipCheckMs: number;
   private readonly background = new Set<Promise<void>>();
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private sweep: ReturnType<typeof setInterval> | null = null;
+  private membershipCheck: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: SyncServiceOptions) {
     this.db = options.db;
@@ -66,6 +80,7 @@ export class SyncService {
     this.now = options.now ?? Date.now;
     this.sweepThreshold = options.sweepThreshold ?? 500;
     this.sweepIntervalMs = options.sweepIntervalMs ?? 5 * 60 * 1000;
+    this.membershipCheckMs = options.membershipCheckMs ?? 30_000;
     this.rooms = new RoomRegistry({
       store: options.store,
       limits: { ...DEFAULT_ROOM_LIMITS, ...options.roomLimits },
@@ -90,8 +105,7 @@ export class SyncService {
   }
 
   // Checks the board, the user's connection budget and the room's capacity, then joins the room.
-  // Access is checked after authentication, so a non-member gets the same answer as a
-  // missing board.
+  // Access is checked after authentication, so a non-member gets the same answer as a missing board.
   async open(input: { user: AuthUser; boardId: string; socket: SocketLike }): Promise<OpenResult> {
     const role = await getBoardRole(this.db, input.boardId, input.user.id);
     if (!role) {
@@ -105,7 +119,7 @@ export class SyncService {
       id: randomUUID(),
       userId: input.user.id,
       boardId: input.boardId,
-      readOnly: role === 'viewer',
+      role,
       socket: input.socket,
       limits: this.limits,
       now: this.now,
@@ -128,8 +142,16 @@ export class SyncService {
       const reason = joined.reason === 'full' ? 'board is full' : 'board is closing';
       return { ok: false, code: CLOSE_POLICY_VIOLATION, reason };
     }
-
     this.connections.set(connection.id, connection);
+
+    // The role was read before the join. A change committed in between is caught here: the join is
+    // already registered, so any later change reaches this connection through applyMembership.
+    const current = await getBoardRole(this.db, input.boardId, input.user.id);
+    if (!current) {
+      connection.close(CLOSE_POLICY_VIOLATION, REVOKED_REASON);
+      return { ok: false, code: CLOSE_POLICY_VIOLATION, reason: REVOKED_REASON };
+    }
+    connection.setRole(current);
     return { ok: true, connection };
   }
 
@@ -156,6 +178,50 @@ export class SyncService {
     await this.rooms.roomFor(boardId)?.applyPersisted(update);
   }
 
+  // Brings this process's connections of one user on one board into line with a membership change.
+  // A null role means the membership was removed, and the connections are closed. Any other role
+  // is applied at once, and the client is told.
+  applyMembership(boardId: string, userId: string, role: BoardRole | null): void {
+    for (const connection of [...this.connections.values()]) {
+      if (connection.boardId !== boardId || connection.userId !== userId) {
+        continue;
+      }
+      if (role === null) {
+        connection.close(CLOSE_POLICY_VIOLATION, REVOKED_REASON);
+      } else {
+        connection.setRole(role);
+      }
+    }
+  }
+
+  // Closes every connection to a board that has been deleted.
+  boardDeleted(boardId: string): void {
+    for (const connection of [...this.connections.values()]) {
+      if (connection.boardId === boardId) {
+        connection.close(CLOSE_POLICY_VIOLATION, BOARD_DELETED_REASON);
+      }
+    }
+  }
+
+  // Re-reads the role of every open connection from the database, and applies what it finds. Used
+  // for changes this process did not make, so their effect is bounded by the check interval.
+  async reconcileMemberships(): Promise<void> {
+    for (const connection of [...this.connections.values()]) {
+      if (connection.isClosed) {
+        continue;
+      }
+      const role = await getBoardRole(this.db, connection.boardId, connection.userId);
+      if (connection.isClosed) {
+        continue;
+      }
+      if (!role) {
+        connection.close(CLOSE_POLICY_VIOLATION, REVOKED_REASON);
+      } else {
+        connection.setRole(role);
+      }
+    }
+  }
+
   // Starts the heartbeat. Every interval it pings each connection and drops any that have not
   // answered within the timeout.
   startHeartbeat(): void {
@@ -175,6 +241,17 @@ export class SyncService {
       }
     }, this.limits.heartbeatIntervalMs);
     this.heartbeat.unref();
+  }
+
+  // Starts the periodic membership check. See reconcileMemberships.
+  startMembershipCheck(): void {
+    if (this.membershipCheck || this.membershipCheckMs <= 0) {
+      return;
+    }
+    this.membershipCheck = setInterval(() => {
+      this.track(this.reconcileMemberships());
+    }, this.membershipCheckMs);
+    this.membershipCheck.unref();
   }
 
   // Starts the periodic compaction sweep, which catches boards left with many updates by a crash.
@@ -199,6 +276,10 @@ export class SyncService {
       clearInterval(this.sweep);
       this.sweep = null;
     }
+    if (this.membershipCheck) {
+      clearInterval(this.membershipCheck);
+      this.membershipCheck = null;
+    }
     for (const connection of [...this.connections.values()]) {
       connection.close(CLOSE_NORMAL, 'server is shutting down');
     }
@@ -219,7 +300,7 @@ export class SyncService {
       .then(
         () => undefined,
         (error: unknown) => {
-          this.logger.error({ err: error }, 'background persistence task failed');
+          this.logger.error({ err: error }, 'background task failed');
         },
       )
       .finally(() => {
@@ -233,8 +314,13 @@ export class SyncService {
       connection.close(CLOSE_POLICY_VIOLATION, error.message);
       return;
     }
+    if (error instanceof AuthorizationError) {
+      // The database refused the write: the role no longer allows it. The connection is closed.
+      connection.close(CLOSE_POLICY_VIOLATION, 'not permitted to change this board');
+      return;
+    }
     if (error instanceof BoardNotFoundError) {
-      connection.close(CLOSE_POLICY_VIOLATION, 'board was deleted');
+      connection.close(CLOSE_POLICY_VIOLATION, BOARD_DELETED_REASON);
       return;
     }
     // The update was not stored, so it is not applied or acknowledged. The client keeps it and
