@@ -58,7 +58,5 @@ test('the dashboard controls can all be reached with the keyboard', async ({ pag
   await expect(page.getByRole('button', { name: 'Create board' })).toBeFocused();
 
   await page.keyboard.press('Enter');
-  await expect(
-    page.getByRole('listitem').filter({ hasText: 'Keyboard board' }),
-  ).toBeVisible();
+  await expect(page.getByRole('listitem').filter({ hasText: 'Keyboard board' })).toBeVisible();
 });

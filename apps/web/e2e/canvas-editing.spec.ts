@@ -36,7 +36,10 @@ function tool(page: Page, name: string): Locator {
 }
 
 async function canvasOrigin(page: Page): Promise<Point> {
-  const box = await page.getByRole('application', { name: 'Whiteboard canvas' }).boundingBox();
+  const surface = page.getByRole('application', { name: 'Whiteboard canvas' });
+  // The sharing panel sits above the canvas, so on a short screen the canvas starts below the fold.
+  await surface.scrollIntoViewIfNeeded();
+  const box = await surface.boundingBox();
   if (!box) {
     throw new Error('the whiteboard canvas is not visible');
   }
@@ -119,9 +122,7 @@ test.describe('whiteboard editing', () => {
     await expect(status(page)).toHaveText('2 objects · 1 selected · 100 × 60 at 220, 220');
   });
 
-  test('edits text in place and undoes the whole editing session in one step', async ({
-    page,
-  }) => {
+  test('edits text in place and undoes the whole editing session in one step', async ({ page }) => {
     await tool(page, 'Text').click();
     const origin = await canvasOrigin(page);
     await page.mouse.click(origin.x + 200, origin.y + 200);

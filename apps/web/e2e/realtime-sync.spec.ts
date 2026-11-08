@@ -16,7 +16,10 @@ function tool(page: Page, name: string): Locator {
 }
 
 async function canvasOrigin(page: Page): Promise<{ x: number; y: number }> {
-  const box = await page.getByRole('application', { name: 'Whiteboard canvas' }).boundingBox();
+  const surface = page.getByRole('application', { name: 'Whiteboard canvas' });
+  // The sharing panel sits above the canvas, so on a short screen the canvas starts below the fold.
+  await surface.scrollIntoViewIfNeeded();
+  const box = await surface.boundingBox();
   if (!box) {
     throw new Error('the whiteboard canvas is not visible');
   }
@@ -56,7 +59,9 @@ async function openNewBoard(page: Page, title: string): Promise<string> {
     .getByRole('link', { name: 'Open' })
     .click();
   await expect(page.getByRole('heading', { name: title })).toBeVisible();
-  await expect(page.getByText('API status')).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Connection status' })).toHaveText('Online', {
+    timeout: 15_000,
+  });
   return new URL(page.url()).pathname;
 }
 

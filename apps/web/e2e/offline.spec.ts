@@ -52,12 +52,50 @@ function connection(page: Page): Locator {
   return page.getByRole('status', { name: 'Connection status' });
 }
 
+// The device copy is IndexedDB database `inkroom-offline`, store `updates`, with one row per saved
+// change (apps/web/src/offline/indexeddb-store.ts).
+async function deviceUpdateCount(page: Page): Promise<number> {
+  return page.evaluate(
+    () =>
+      new Promise<number>((resolve, reject) => {
+        const request = indexedDB.open('inkroom-offline', 1);
+        request.onsuccess = () => {
+          const database = request.result;
+          const count = database.transaction('updates', 'readonly').objectStore('updates').count();
+          count.onsuccess = () => {
+            database.close();
+            resolve(count.result);
+          };
+          count.onerror = () => reject(count.error);
+        };
+        request.onerror = () => reject(request.error);
+      }),
+  );
+}
+
+// Waits until the device copy stops changing, so a count read now includes every save so far.
+async function settledDeviceUpdateCount(page: Page): Promise<number> {
+  let previous = -1;
+  await expect
+    .poll(async () => {
+      const current = await deviceUpdateCount(page);
+      const settled = current === previous;
+      previous = current;
+      return settled;
+    })
+    .toBe(true);
+  return previous;
+}
+
 function tool(page: Page, name: string): Locator {
   return page.getByRole('button', { name, exact: true });
 }
 
 async function canvasOrigin(page: Page): Promise<{ x: number; y: number }> {
-  const box = await page.getByRole('application', { name: 'Whiteboard canvas' }).boundingBox();
+  const surface = page.getByRole('application', { name: 'Whiteboard canvas' });
+  // The sharing panel sits above the canvas, so on a short screen the canvas starts below the fold.
+  await surface.scrollIntoViewIfNeeded();
+  const box = await surface.boundingBox();
   if (!box) {
     throw new Error('the whiteboard canvas is not visible');
   }
@@ -131,6 +169,7 @@ test('an edit made offline survives a reload, and reaches the server when the co
       { x: origin.x + 300, y: origin.y + 260 },
     );
     await expect(status(page)).toContainText('1 object');
+    const savedBeforeOfflineEdit = await settledDeviceUpdateCount(page);
 
     // Lose the network and the connection, then keep editing.
     socket.goOffline();
@@ -143,6 +182,9 @@ test('an edit made offline survives a reload, and reaches the server when the co
       { x: origin.x + 500, y: origin.y + 260 },
     );
     await expect(status(page)).toContainText('2 objects');
+
+    // The reload must not start while the offline edit is still being written to the device.
+    await expect.poll(() => deviceUpdateCount(page)).toBeGreaterThan(savedBeforeOfflineEdit);
 
     // Reload while still offline: the app and the board open from this device, with both objects.
     await page.reload();
@@ -262,10 +304,9 @@ test('a board deleted while it is open ends access here, and its copy is removed
     await ownerPage.getByRole('button', { name: 'Delete board' }).click();
 
     // The open page is told at once, and says that its copy was removed.
-    await expect(openPage.getByRole('alert')).toContainText(
-      'Your access to this board has ended',
-      { timeout: 15_000 },
-    );
+    await expect(openPage.getByRole('alert')).toContainText('Your access to this board has ended', {
+      timeout: 15_000,
+    });
 
     // Reloading shows that the board is gone; the removed copy is not used instead.
     await openPage.reload();

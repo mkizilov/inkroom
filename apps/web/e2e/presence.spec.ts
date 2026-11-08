@@ -44,7 +44,10 @@ async function createBoard(page: Page, title: string): Promise<string> {
 }
 
 async function canvasOrigin(page: Page): Promise<{ x: number; y: number }> {
-  const box = await page.getByRole('application', { name: 'Whiteboard canvas' }).boundingBox();
+  const surface = page.getByRole('application', { name: 'Whiteboard canvas' });
+  // The sharing panel sits above the canvas, so on a short screen the canvas starts below the fold.
+  await surface.scrollIntoViewIfNeeded();
+  const box = await surface.boundingBox();
   if (!box) {
     throw new Error('the whiteboard canvas is not visible');
   }
