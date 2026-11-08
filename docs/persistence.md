@@ -123,11 +123,11 @@ effect on objects the restore just changed follows the normal merge rules.
 
 ## HTTP
 
-| Method | Path                                         | Who                          | Result                                     |
-| ------ | -------------------------------------------- | ---------------------------- | ------------------------------------------ |
-| GET    | `/api/boards/:boardId/revisions`             | any member                   | `{ items: Revision[] }`                    |
-| GET    | `/api/boards/:boardId/revisions/:revision`   | any member                   | `{ revision, objects }`                    |
-| POST   | `/api/boards/:boardId/revisions/:revision/restore` | owner                  | `201 { changed: true, revision }`, or `200 { changed: false, revision: null }` |
+| Method | Path                                               | Who        | Result                                                                         |
+| ------ | -------------------------------------------------- | ---------- | ------------------------------------------------------------------------------ |
+| GET    | `/api/boards/:boardId/revisions`                   | any member | `{ items: Revision[] }`                                                        |
+| GET    | `/api/boards/:boardId/revisions/:revision`         | any member | `{ revision, objects }`                                                        |
+| POST   | `/api/boards/:boardId/revisions/:revision/restore` | owner      | `201 { changed: true, revision }`, or `200 { changed: false, revision: null }` |
 
 Unknown revisions return 404 `revision_not_found`. Non-members get 404 `board_not_found`. Editors and
 viewers who try to restore get 403 `forbidden`. The POST is a state-changing request, so it needs

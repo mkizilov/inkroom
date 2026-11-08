@@ -13,7 +13,8 @@ presence, and the production deployment setup described below.
 
 The code has not yet been built, type-checked, linted or tested in an environment with installed
 dependencies. The authoring environment could not reach the package registry or run Docker. The
-first CI run is the first full verification. See [Limitations](#limitations).
+first CI run is the first full verification. [ROADMAP.md](ROADMAP.md) lists what has been verified,
+what has not, and the prioritized next steps. See also [Limitations](#limitations).
 
 One thing blocks CI and the Docker builds: `pnpm-lock.yaml` is not committed yet. Both use
 `pnpm install --frozen-lockfile`, which fails without it. Generate it on a networked machine with
@@ -30,6 +31,7 @@ pnpm 9.15.4 (`pnpm install`), review the diff, and commit it.
 - `docker-compose.yml` runs PostgreSQL for development.
 - `docker-compose.prod.yml` runs the production stack.
 - `.github/workflows/ci.yml` runs the checks on every push and pull request.
+- `ROADMAP.md` lists what has been verified, what has not, and the prioritized next steps.
 - `AGENTS.md` describes the conventions for coding agents working in this repository.
 
 ## Installation
@@ -314,6 +316,8 @@ Guidance:
 - Offline access covers only boards that were opened online on the same device.
 - There is no email verification, password reset or multi-factor authentication.
 - The application does not encrypt data at rest. Use an encrypted volume or disk.
+- Most features have been written and reviewed, but not executed against installed dependencies. See
+  [ROADMAP.md](ROADMAP.md) for the status of each area.
 
 ## Contributing
 

@@ -5,14 +5,14 @@ InkRoom stores data in PostgreSQL 16 through Drizzle ORM. The schema is defined 
 
 ## Entities
 
-| Table                  | Purpose                                                               |
-| ---------------------- | --------------------------------------------------------------------- |
-| `users`                | Accounts. Emails are stored lower-case and are unique.                |
-| `sessions`             | Login sessions. Only a hash of the token is stored.                   |
-| `boards`               | Whiteboards. Each board has one owning user.                          |
+| Table                  | Purpose                                                                    |
+| ---------------------- | -------------------------------------------------------------------------- |
+| `users`                | Accounts. Emails are stored lower-case and are unique.                     |
+| `sessions`             | Login sessions. Only a hash of the token is stored.                        |
+| `boards`               | Whiteboards. Each board has one owning user.                               |
 | `board_memberships`    | Who can access a board, and with which role (`owner`, `editor`, `viewer`). |
-| `yjs_document_updates` | Append-only log of persisted Yjs document updates, ordered by `seq`.  |
-| `board_snapshots`      | Compacted Yjs document state up to a given update sequence number.    |
+| `yjs_document_updates` | Append-only log of persisted Yjs document updates, ordered by `seq`.       |
+| `board_snapshots`      | Compacted Yjs document state up to a given update sequence number.         |
 
 All tables use UUID primary keys (`gen_random_uuid()`), and every table has `created_at` and
 `updated_at` as `timestamptz`. A trigger, `set_updated_at()`, sets `updated_at` on every UPDATE,
@@ -41,12 +41,12 @@ boards 1──* board_snapshots
 
 ## Deletion policies
 
-| Parent deleted           | Child effect                                                              |
-| ------------------------ | ------------------------------------------------------------------------- |
-| `users`                  | `sessions` and `board_memberships` are deleted (cascade).                 |
-| `users` (owner of a board) | Blocked (`RESTRICT`). Delete or transfer the board first.               |
-| `users` (update author)  | `yjs_document_updates.author_id` is set to `NULL`.                        |
-| `boards`                 | `board_memberships`, `yjs_document_updates` and `board_snapshots` are deleted (cascade). |
+| Parent deleted             | Child effect                                                                             |
+| -------------------------- | ---------------------------------------------------------------------------------------- |
+| `users`                    | `sessions` and `board_memberships` are deleted (cascade).                                |
+| `users` (owner of a board) | Blocked (`RESTRICT`). Delete or transfer the board first.                                |
+| `users` (update author)    | `yjs_document_updates.author_id` is set to `NULL`.                                       |
+| `boards`                   | `board_memberships`, `yjs_document_updates` and `board_snapshots` are deleted (cascade). |
 
 ## Constraints
 

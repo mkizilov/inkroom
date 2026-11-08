@@ -9,14 +9,14 @@ when the page is left.
 The document is an ordered list of objects, defined in `packages/shared/src/canvas.ts`. The same
 zod schemas validate objects on the client and any future server.
 
-| Type        | Fields (besides `id`, `x`, `y`, `stroke`, `strokeWidth`)                  |
-| ----------- | ------------------------------------------------------------------------- |
-| `pen`       | `points`: at least 2 points, relative to `x`, `y`                        |
-| `rectangle` | `width`, `height`, optional `fill`                                       |
-| `ellipse`   | `width`, `height` (the bounding box), optional `fill`                    |
-| `line`      | `dx`, `dy`: end point relative to `x`, `y`                               |
-| `arrow`     | `dx`, `dy`: as for `line`, drawn with a head at the end                  |
-| `text`      | `text` (up to 5000 characters), `fontSize`; `stroke` is the text colour  |
+| Type        | Fields (besides `id`, `x`, `y`, `stroke`, `strokeWidth`)                |
+| ----------- | ----------------------------------------------------------------------- |
+| `pen`       | `points`: at least 2 points, relative to `x`, `y`                       |
+| `rectangle` | `width`, `height`, optional `fill`                                      |
+| `ellipse`   | `width`, `height` (the bounding box), optional `fill`                   |
+| `line`      | `dx`, `dy`: end point relative to `x`, `y`                              |
+| `arrow`     | `dx`, `dy`: as for `line`, drawn with a head at the end                 |
+| `text`      | `text` (up to 5000 characters), `fontSize`; `stroke` is the text colour |
 
 - **IDs.** Every object has a UUID `id`, generated when the object is created. IDs are stable: they
   do not change when an object moves, resizes, or is edited, and selection refers to them.
@@ -44,12 +44,12 @@ Every change to the document is an operation on objects addressed by id. The ope
 defined in `packages/shared/src/canvas-operations.ts` and are written to the Yjs document by
 `apps/web/src/canvas/doc/model.ts`:
 
-| Operation | Meaning                                                                       |
-| --------- | ----------------------------------------------------------------------------- |
-| `insert`  | Add objects at an index in the z-order                                         |
-| `remove`  | Remove objects by id                                                           |
+| Operation | Meaning                                                                             |
+| --------- | ----------------------------------------------------------------------------------- |
+| `insert`  | Add objects at an index in the z-order                                              |
+| `remove`  | Remove objects by id                                                                |
 | `update`  | Change named fields of one object (`x`, `width`, `text`, ...), validated as a whole |
-| `reorder` | Give the full new z-order as a permutation of the current ids                  |
+| `reorder` | Give the full new z-order as a permutation of the current ids                       |
 
 `applyOperations(objects, operations)` is pure and throws `OperationError` on anything that does
 not fit the document. `diffDocuments(before, after)` produces the operations that turn one document
@@ -140,31 +140,31 @@ are set to `listening={false}`, so all pointer handling goes through the editor.
 
 ## Keyboard and pointer
 
-| Input                                  | Action                                                    |
-| -------------------------------------- | --------------------------------------------------------- |
-| Toolbar, or V H P R O L A T            | Select, Hand (pan), Pen, Rectangle, Ellipse, Line, Arrow, Text |
-| Drag on an object with Select          | Move it, with the rest of the selection                    |
-| Drag a selection handle                | Resize the selection                                       |
-| Drag on empty space with Select        | Marquee selection                                          |
-| Shift + click                          | Add to or remove from the selection                        |
-| Click on empty space                   | Clear the selection                                        |
-| Drag with Pen or a shape tool          | Draw; releasing creates the object (clicks create nothing) |
-| Click with Text                        | Create a text object and start typing                      |
-| Double-click a text object             | Edit its text                                              |
-| Ctrl/Cmd + Z                           | Undo                                                       |
-| Ctrl/Cmd + Shift + Z, or Ctrl/Cmd + Y  | Redo                                                       |
-| Ctrl/Cmd + A                           | Select all                                                 |
-| Ctrl/Cmd + C, X, V, D                  | Copy, cut, paste, duplicate                                |
-| Ctrl/Cmd + ], [                        | Bring forward, send backward                               |
-| Ctrl/Cmd + Shift + ], [                | Bring to front, send to back                               |
-| Arrow keys, Shift + arrow keys         | Nudge the selection by 1 or 10 world units                 |
-| Delete or Backspace                    | Delete the selection                                       |
-| Escape                                 | Clear the selection (or leave text editing)                |
-| Hold Space, middle button, or Hand     | Pan                                                        |
-| Two-finger drag                        | Pan and pinch-zoom                                         |
-| Wheel or two-finger trackpad scroll    | Pan                                                        |
-| Ctrl/Cmd + wheel or trackpad pinch     | Zoom around the pointer                                    |
-| Zoom in / Zoom out / Reset view        | Zoom by 25 % steps, or return to 100 % at the origin       |
+| Input                                 | Action                                                         |
+| ------------------------------------- | -------------------------------------------------------------- |
+| Toolbar, or V H P R O L A T           | Select, Hand (pan), Pen, Rectangle, Ellipse, Line, Arrow, Text |
+| Drag on an object with Select         | Move it, with the rest of the selection                        |
+| Drag a selection handle               | Resize the selection                                           |
+| Drag on empty space with Select       | Marquee selection                                              |
+| Shift + click                         | Add to or remove from the selection                            |
+| Click on empty space                  | Clear the selection                                            |
+| Drag with Pen or a shape tool         | Draw; releasing creates the object (clicks create nothing)     |
+| Click with Text                       | Create a text object and start typing                          |
+| Double-click a text object            | Edit its text                                                  |
+| Ctrl/Cmd + Z                          | Undo                                                           |
+| Ctrl/Cmd + Shift + Z, or Ctrl/Cmd + Y | Redo                                                           |
+| Ctrl/Cmd + A                          | Select all                                                     |
+| Ctrl/Cmd + C, X, V, D                 | Copy, cut, paste, duplicate                                    |
+| Ctrl/Cmd + ], [                       | Bring forward, send backward                                   |
+| Ctrl/Cmd + Shift + ], [               | Bring to front, send to back                                   |
+| Arrow keys, Shift + arrow keys        | Nudge the selection by 1 or 10 world units                     |
+| Delete or Backspace                   | Delete the selection                                           |
+| Escape                                | Clear the selection (or leave text editing)                    |
+| Hold Space, middle button, or Hand    | Pan                                                            |
+| Two-finger drag                       | Pan and pinch-zoom                                             |
+| Wheel or two-finger trackpad scroll   | Pan                                                            |
+| Ctrl/Cmd + wheel or trackpad pinch    | Zoom around the pointer                                        |
+| Zoom in / Zoom out / Reset view       | Zoom by 25 % steps, or return to 100 % at the origin           |
 
 Mouse and touch input both use pointer events. The canvas sets `touch-action: none` so the browser
 does not scroll or zoom the page during a gesture. The wheel listener is attached directly with

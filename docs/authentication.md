@@ -13,12 +13,12 @@ All responses are JSON. Errors use one shape:
 
 Validation errors add `details: [{ "field": "password", "message": "..." }]`.
 
-| Method | Path                 | Auth   | Success                          | Error codes                                                        |
-| ------ | -------------------- | ------ | -------------------------------- | ------------------------------------------------------------------ |
-| POST   | `/api/auth/register` | none   | `201` `{ user }` + session cookie | `validation_failed` 400, `email_taken` 409                         |
+| Method | Path                 | Auth   | Success                           | Error codes                                                            |
+| ------ | -------------------- | ------ | --------------------------------- | ---------------------------------------------------------------------- |
+| POST   | `/api/auth/register` | none   | `201` `{ user }` + session cookie | `validation_failed` 400, `email_taken` 409                             |
 | POST   | `/api/auth/login`    | none   | `200` `{ user }` + session cookie | `validation_failed` 400, `invalid_credentials` 401, `rate_limited` 429 |
-| POST   | `/api/auth/logout`   | cookie | `204`, cookie cleared            | `csrf_origin_rejected` 403                                         |
-| GET    | `/api/auth/me`       | cookie | `200` `{ user }`                 | `unauthenticated` 401, `session_expired` 401, `session_revoked` 401 |
+| POST   | `/api/auth/logout`   | cookie | `204`, cookie cleared             | `csrf_origin_rejected` 403                                             |
+| GET    | `/api/auth/me`       | cookie | `200` `{ user }`                  | `unauthenticated` 401, `session_expired` 401, `session_revoked` 401    |
 
 Any unknown route returns `404` with code `not_found`. Malformed JSON returns `400` with code
 `invalid_request`. Unexpected failures return `500` with code `internal_error` and log the cause on
@@ -46,14 +46,14 @@ the server only.
 
 ## Cookies
 
-| Attribute  | Value                                     | Why                                              |
-| ---------- | ----------------------------------------- | ------------------------------------------------ |
-| Name       | `inkroom_session`, or `__Host-inkroom_session` when secure | `__Host-` forces Secure, `Path=/` and no `Domain` |
-| `HttpOnly` | always                                    | page scripts cannot read the token               |
-| `Secure`   | production by default, `COOKIE_SECURE` overrides | cookie is sent only over HTTPS                    |
-| `SameSite` | `Lax`                                     | cross-site POST requests do not carry the cookie |
-| `Path`     | `/`                                       |                                                  |
-| `Max-Age`  | 604800 (seven days)                       |                                                  |
+| Attribute  | Value                                                               | Why                                               |
+| ---------- | ------------------------------------------------------------------- | ------------------------------------------------- |
+| Name       | `inkroom_session`, or `__Host-inkroom_session` when secure          | `__Host-` forces Secure, `Path=/` and no `Domain` |
+| `HttpOnly` | always                                                              | page scripts cannot read the token                |
+| `Secure`   | production by default; `COOKIE_SECURE` overrides outside production | cookie is sent only over HTTPS                    |
+| `SameSite` | `Lax`                                                               | cross-site POST requests do not carry the cookie  |
+| `Path`     | `/`                                                                 |                                                   |
+| `Max-Age`  | 604800 (seven days)                                                 |                                                   |
 
 Local development runs over plain HTTP, so `Secure` is off there. Browsers reject `Secure`
 cookies over HTTP, so the `__Host-` prefix is used only when cookies are secure.

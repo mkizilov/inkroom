@@ -16,12 +16,12 @@ write routes apply.
 The frames are the y-protocols version 1 format, implemented in
 `packages/shared/src/sync-protocol.ts`, so the server and the browser use one definition:
 
-| Frame                     | Meaning                                                     |
-| ------------------------- | ----------------------------------------------------------- |
+| Frame                      | Meaning                                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------------------- |
 | sync step 1 (state vector) | "Here is what I have." The receiver replies with what the sender lacks, and sends its own state vector. |
-| sync step 2 (update)      | Updates the receiver lacks, sent as the reply to step 1.    |
-| sync update               | One change made by a client, relayed to the other clients.  |
-| awareness                 | Presence (cursors and names). Ephemeral, per connection.    |
+| sync step 2 (update)       | Updates the receiver lacks, sent as the reply to step 1.                                                |
+| sync update                | One change made by a client, relayed to the other clients.                                              |
+| awareness                  | Presence (cursors and names). Ephemeral, per connection.                                                |
 
 A frame is a varint outer type, then its payload as length-prefixed bytes. Decoding rejects a
 truncated frame, an unknown type, a payload over the limit, and trailing bytes.
@@ -74,14 +74,14 @@ UI. See the viewer-echo limit below.
 
 ## Limits
 
-| Limit                       | Default   | Enforced by                                         |
-| --------------------------- | --------- | --------------------------------------------------- |
-| Frame size                  | 1 MiB     | Connection: close 1009 before the frame is decoded  |
-| Payload size inside a frame | 1 MiB     | Protocol decoder                                    |
+| Limit                       | Default               | Enforced by                                                                    |
+| --------------------------- | --------------------- | ------------------------------------------------------------------------------ |
+| Frame size                  | 1 MiB                 | Connection: close 1009 before the frame is decoded                             |
+| Payload size inside a frame | 1 MiB                 | Protocol decoder                                                               |
 | Update bytes per second     | 4 MiB, per connection | Room. Over the budget the frame is refused and the connection is closed (1008) |
-| Connections per room        | 50        | Room join                                           |
-| Connections per user        | 20        | Service, across all boards                          |
-| Buffered outgoing bytes     | 8 MiB     | Connection: a slow reader is closed (1013)          |
+| Connections per room        | 50                    | Room join                                                                      |
+| Connections per user        | 20                    | Service, across all boards                                                     |
+| Buffered outgoing bytes     | 8 MiB                 | Connection: a slow reader is closed (1013)                                     |
 
 All limits are configurable through `roomLimits` and `connectionLimits` in `buildApp`.
 
