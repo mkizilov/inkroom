@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, InjectOptions } from 'fastify';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import { buildApp } from '../app';
 import { issueSession } from '../auth/service';
 import { createBoard } from '../db/repositories/boards';

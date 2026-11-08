@@ -1,8 +1,4 @@
-import {
-  ProtocolError,
-  presenceStateSchema,
-  type AwarenessEntry,
-} from '@inkroom/shared';
+import { ProtocolError, presenceStateSchema, type AwarenessEntry } from '@inkroom/shared';
 
 // Live presence for one room, held in memory only. It is never written to the database.
 //

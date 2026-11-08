@@ -28,8 +28,7 @@ export interface Logger {
 }
 
 export type OpenResult =
-  | { ok: true; connection: SyncConnection }
-  | { ok: false; code: number; reason: string };
+  { ok: true; connection: SyncConnection } | { ok: false; code: number; reason: string };
 
 export interface SyncServiceOptions {
   db: DbExecutor;

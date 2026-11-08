@@ -11,9 +11,7 @@ describe('session cookies', () => {
 
   it('sets HttpOnly and SameSite=Lax with a seven day lifetime', () => {
     const header = sessionSetCookie(token, false);
-    expect(header).toBe(
-      `inkroom_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`,
-    );
+    expect(header).toBe(`inkroom_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
   });
 
   it('adds Secure and the __Host- prefix when cookies are secure', () => {

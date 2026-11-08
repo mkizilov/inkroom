@@ -12,8 +12,7 @@ import { generateSessionToken, hashSessionToken } from './session-token';
 export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type SessionResolution =
-  | { status: 'active'; user: AuthUser }
-  | { status: 'invalid' | 'expired' | 'revoked' };
+  { status: 'active'; user: AuthUser } | { status: 'invalid' | 'expired' | 'revoked' };
 
 export function toAuthUser(user: { id: string; email: string; displayName: string }): AuthUser {
   return { id: user.id, email: user.email, displayName: user.displayName };

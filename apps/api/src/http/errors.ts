@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyError, FastifyInstance } from 'fastify';
 import type { ApiErrorBody } from '@inkroom/shared';
 
 export interface ErrorDetail {
@@ -24,7 +24,7 @@ export function errorBody(code: string, message: string, details?: ErrorDetail[]
 }
 
 export function registerErrorHandlers(app: FastifyInstance): void {
-  app.setErrorHandler((error, request, reply) => {
+  app.setErrorHandler((error: FastifyError, request, reply) => {
     if (error instanceof AppError) {
       if (error.headers) {
         reply.headers(error.headers);

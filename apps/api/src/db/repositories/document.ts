@@ -26,7 +26,7 @@ export function listDocumentUpdates(db: DbExecutor, boardId: string, afterSeq = 
 
 export async function saveSnapshot(
   db: DbExecutor,
-  input: { boardId: string; upToSeq: number; state: Buffer },
+  input: { boardId: string; upToSeq: number; revision: number; state: Buffer },
 ) {
   const rows = await db.insert(boardSnapshots).values(input).returning();
   return firstRow(rows, 'board_snapshots insert');

@@ -54,8 +54,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     databaseUrl: parsed.DATABASE_URL,
     webOrigin: parsed.WEB_ORIGIN ?? DEVELOPMENT_WEB_ORIGIN,
     // Secure cookies are the default in production; set COOKIE_SECURE to override outside it.
-    cookieSecure:
-      parsed.COOKIE_SECURE === undefined ? production : parsed.COOKIE_SECURE === 'true',
+    cookieSecure: parsed.COOKIE_SECURE === undefined ? production : parsed.COOKIE_SECURE === 'true',
     logLevel: parsed.LOG_LEVEL,
     trustProxy: (parsed.TRUST_PROXY ?? '')
       .split(',')

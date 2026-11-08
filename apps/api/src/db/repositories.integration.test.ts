@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import {
   createBoard,
   deleteBoard,
@@ -176,9 +176,24 @@ describeWithDatabase('database access modules', () => {
     const board = await createBoard(database.db, { ownerId: owner.id, title: 'Snapshots' });
     expect(await findLatestSnapshot(database.db, board.id)).toBeNull();
 
-    await saveSnapshot(database.db, { boardId: board.id, upToSeq: 3, state: Buffer.from([9]) });
-    await saveSnapshot(database.db, { boardId: board.id, upToSeq: 7, state: Buffer.from([8]) });
-    await saveSnapshot(database.db, { boardId: board.id, upToSeq: 5, state: Buffer.from([7]) });
+    await saveSnapshot(database.db, {
+      boardId: board.id,
+      upToSeq: 3,
+      revision: 1,
+      state: Buffer.from([9]),
+    });
+    await saveSnapshot(database.db, {
+      boardId: board.id,
+      upToSeq: 7,
+      revision: 2,
+      state: Buffer.from([8]),
+    });
+    await saveSnapshot(database.db, {
+      boardId: board.id,
+      upToSeq: 5,
+      revision: 3,
+      state: Buffer.from([7]),
+    });
 
     expect((await findLatestSnapshot(database.db, board.id))?.upToSeq).toBe(7);
   });

@@ -1,7 +1,6 @@
 import * as Y from 'yjs';
 import type {
   BoardStore,
-  CompactionHooks,
   RestoreResult,
   RevisionContent,
   RevisionMeta,
@@ -37,15 +36,15 @@ export class MemoryBoardStore implements BoardStore {
     return this.lastSeq;
   }
 
-  async compact(_boardId: string, _hooks?: CompactionHooks): Promise<RevisionMeta | null> {
+  async compact(): Promise<RevisionMeta | null> {
     return null;
   }
 
-  async compactDue(_threshold: number): Promise<SweepResult> {
+  async compactDue(): Promise<SweepResult> {
     return { compacted: 0, failed: [] };
   }
 
-  async listRevisions(_boardId: string): Promise<RevisionMeta[]> {
+  async listRevisions(): Promise<RevisionMeta[]> {
     return [];
   }
 

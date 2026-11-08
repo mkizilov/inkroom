@@ -1,9 +1,5 @@
 import { sql } from 'drizzle-orm';
-import {
-  drizzle,
-  type NodePgDatabase,
-  type NodePgQueryResultHKT,
-} from 'drizzle-orm/node-postgres';
+import { drizzle, type NodePgDatabase, type NodePgQueryResultHKT } from 'drizzle-orm/node-postgres';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { Pool, type PoolConfig } from 'pg';
 import * as schema from './schema';

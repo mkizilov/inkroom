@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import {
   boardMemberships,
   boardSnapshots,
@@ -71,9 +71,7 @@ describeWithDatabase('database schema constraints', () => {
       .values({ email, displayName: 'First', passwordHash: 'test-hash' });
 
     await expectSqlState(
-      database.db
-        .insert(users)
-        .values({ email, displayName: 'Second', passwordHash: 'test-hash' }),
+      database.db.insert(users).values({ email, displayName: 'Second', passwordHash: 'test-hash' }),
       '23505',
     );
     await expectSqlState(
@@ -114,9 +112,7 @@ describeWithDatabase('database schema constraints', () => {
       .insert(sessions)
       .values({ userId: user.id, tokenHash: 'hash-unique', expiresAt });
     await expectSqlState(
-      database.db
-        .insert(sessions)
-        .values({ userId: user.id, tokenHash: 'hash-unique', expiresAt }),
+      database.db.insert(sessions).values({ userId: user.id, tokenHash: 'hash-unique', expiresAt }),
       '23505',
     );
   });
@@ -233,17 +229,17 @@ describeWithDatabase('database schema constraints', () => {
     await expectSqlState(
       database.db
         .insert(boardSnapshots)
-        .values({ boardId: board.id, upToSeq: 0, state: payload }),
+        .values({ boardId: board.id, upToSeq: 0, revision: 1, state: payload }),
       '23514',
     );
 
     await database.db
       .insert(boardSnapshots)
-      .values({ boardId: board.id, upToSeq: 5, state: payload });
+      .values({ boardId: board.id, upToSeq: 5, revision: 1, state: payload });
     await expectSqlState(
       database.db
         .insert(boardSnapshots)
-        .values({ boardId: board.id, upToSeq: 5, state: payload }),
+        .values({ boardId: board.id, upToSeq: 5, revision: 2, state: payload }),
       '23505',
     );
   });
@@ -345,12 +341,15 @@ describeWithDatabase('database cascade and deletion policies', () => {
       .values({ boardId: board.id, authorId: owner.id, payload });
     await database.db
       .insert(boardSnapshots)
-      .values({ boardId: board.id, upToSeq: 1, state: payload });
+      .values({ boardId: board.id, upToSeq: 1, revision: 1, state: payload });
 
     await database.db.delete(boards).where(eq(boards.id, board.id));
 
     expect(
-      await database.db.select().from(boardMemberships).where(eq(boardMemberships.boardId, board.id)),
+      await database.db
+        .select()
+        .from(boardMemberships)
+        .where(eq(boardMemberships.boardId, board.id)),
     ).toHaveLength(0);
     expect(
       await database.db
@@ -361,8 +360,6 @@ describeWithDatabase('database cascade and deletion policies', () => {
     expect(
       await database.db.select().from(boardSnapshots).where(eq(boardSnapshots.boardId, board.id)),
     ).toHaveLength(0);
-    expect(await database.db.select().from(users).where(eq(users.id, owner.id))).toHaveLength(
-      1,
-    );
+    expect(await database.db.select().from(users).where(eq(users.id, owner.id))).toHaveLength(1);
   });
 });

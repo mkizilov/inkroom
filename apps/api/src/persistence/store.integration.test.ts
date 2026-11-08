@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import * as Y from 'yjs';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { createBoard } from '../db/repositories/boards';
 import { createUser } from '../db/repositories/users';
@@ -185,10 +185,10 @@ describeWithDatabase('durable board storage', () => {
   });
 
   it('reports an unknown revision as not found', async () => {
-    const { boardId } = await newBoard();
+    const { owner, boardId } = await newBoard();
 
     await expect(store.getRevision(boardId, 99)).rejects.toBeInstanceOf(RevisionNotFoundError);
-    await expect(store.restore(boardId, 99, randomUUID())).rejects.toBeInstanceOf(
+    await expect(store.restore(boardId, 99, owner.id)).rejects.toBeInstanceOf(
       RevisionNotFoundError,
     );
   });

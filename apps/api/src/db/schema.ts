@@ -118,9 +118,7 @@ export const boardMemberships = pgTable(
     }).onDelete('cascade'),
     unique('board_memberships_board_user_unique').on(t.boardId, t.userId),
     index('board_memberships_user_id_idx').on(t.userId),
-    uniqueIndex('board_memberships_one_owner_idx')
-      .on(t.boardId)
-      .where(sql.raw("role = 'owner'")),
+    uniqueIndex('board_memberships_one_owner_idx').on(t.boardId).where(sql.raw("role = 'owner'")),
   ],
 );
 
@@ -181,7 +179,7 @@ export const boardSnapshots = pgTable(
     check('board_snapshots_kind_check', sql.raw("kind IN ('compaction', 'restore')")),
     check(
       'board_snapshots_restored_from_check',
-      sql.raw('(kind = \'restore\') = (restored_from IS NOT NULL)'),
+      sql.raw("(kind = 'restore') = (restored_from IS NOT NULL)"),
     ),
     foreignKey({
       name: 'board_snapshots_created_by_fkey',

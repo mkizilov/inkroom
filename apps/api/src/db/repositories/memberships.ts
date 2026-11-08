@@ -10,10 +10,7 @@ export interface MembershipKey {
 
 // Ownership is assigned only by createBoard. The functions below never create, change or
 // remove an owner row, so every board keeps exactly one owner.
-export async function addMember(
-  db: DbExecutor,
-  input: MembershipKey & { role: MemberRole },
-) {
+export async function addMember(db: DbExecutor, input: MembershipKey & { role: MemberRole }) {
   const rows = await db.insert(boardMemberships).values(input).returning();
   return firstRow(rows, 'board_memberships insert');
 }

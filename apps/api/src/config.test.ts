@@ -71,8 +71,7 @@ describe('loadConfig', () => {
 
   it('reads the trusted proxy list, ignoring blank entries', () => {
     expect(
-      loadConfig({ DATABASE_URL: databaseUrl, TRUST_PROXY: '172.28.0.0/24, 10.0.0.2,' })
-        .trustProxy,
+      loadConfig({ DATABASE_URL: databaseUrl, TRUST_PROXY: '172.28.0.0/24, 10.0.0.2,' }).trustProxy,
     ).toEqual(['172.28.0.0/24', '10.0.0.2']);
   });
 

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import { issueSession, revokeSession } from '../auth/service';
 import { hashSessionToken } from '../auth/session-token';
 import { createBoard } from '../db/repositories/boards';

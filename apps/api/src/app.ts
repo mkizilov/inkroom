@@ -16,7 +16,7 @@ import { PostgresBoardStore } from './persistence/store';
 import { DEFAULT_CONNECTION_LIMITS, type ConnectionLimits } from './sync/connections';
 import { registerSyncRoutes } from './sync/routes';
 import { SyncService } from './sync/service';
-import { DEFAULT_ROOM_LIMITS, type RoomLimits } from './sync/room';
+import type { RoomLimits } from './sync/room';
 
 export const DEFAULT_WEB_ORIGIN = 'http://127.0.0.1:21173';
 

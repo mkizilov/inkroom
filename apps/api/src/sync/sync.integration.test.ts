@@ -1,12 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import * as Y from 'yjs';
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import {
-  SyncClient,
-  decodeClientMessage,
-  encodeSyncUpdate,
-  type AuthUser,
-} from '@inkroom/shared';
+import { SyncClient, decodeClientMessage, encodeSyncUpdate, type AuthUser } from '@inkroom/shared';
 import { createBoard, deleteBoard } from '../db/repositories/boards';
 import { addMember, removeMember, setMemberRole } from '../db/repositories/memberships';
 import { createUser } from '../db/repositories/users';
@@ -231,6 +226,7 @@ describeWithDatabase('board sync service', () => {
     }
     await pump(service, bobSocket, bobClient, bobJoin);
 
+    await pump(service, aliceSocket, aliceClient, aliceJoin);
     expect(bobDoc.getMap('objects').get('shape')).toBe('rect');
     expect(service.roomFor(board.id)?.doc.getMap('objects').get('shape')).toBe('rect');
     expect(aliceClient.acknowledgedSeq).toBeGreaterThan(0);

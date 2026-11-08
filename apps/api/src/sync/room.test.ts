@@ -288,6 +288,7 @@ describe('durability', () => {
     await alice?.edit((doc) => doc.getMap('objects').set('a', textObject('a', 'stored')));
 
     expect(store.updates.get(BOARD)?.length ?? 0).toBeGreaterThan(0);
+    await bob?.deliver();
     expect(bob?.objectIds()).toEqual(['a']);
   });
 
@@ -327,6 +328,7 @@ describe('durability', () => {
     await expect(room.receive('alice', encodeSyncUpdate(update))).rejects.toThrow();
     await room.receive('alice', encodeSyncUpdate(update));
 
+    await alice?.deliver();
     expect(room.doc.getMap('objects').has('retry')).toBe(true);
     expect(alice?.sync.acknowledgedSeq).toBeGreaterThan(0);
   });
@@ -601,14 +603,16 @@ describe('room lifecycle and recovery', () => {
     const store = new MemoryBoardStore();
     const room = makeRoom(store);
     const [alice] = await connectAll(room, ['alice']);
-    await alice?.edit((doc) => doc.getMap('objects').set('a', textObject('a', 'first')));
-    await alice?.edit((doc) => doc.getMap('objects').set('b', textObject('b', 'second')));
+    const first = '00000000-0000-4000-8000-000000000001';
+    const second = '00000000-0000-4000-8000-000000000002';
+    await alice?.edit((doc) => doc.getMap('objects').set(first, textObject(first, 'first')));
+    await alice?.edit((doc) => doc.getMap('objects').set(second, textObject(second, 'second')));
 
     const rebuilt = readOrderedObjects(
       (await store.load(BOARD)).getMap<Y.Map<unknown>>('objects'),
     ).objects;
 
-    expect(rebuilt.map((object) => object.id)).toEqual(['a', 'b']);
+    expect(rebuilt.map((object) => object.id)).toEqual([first, second]);
   });
 });
 

@@ -8,13 +8,7 @@ import { sessionClearCookie, sessionSetCookie } from './cookies';
 import { currentUserOf, requestSessionToken } from './middleware';
 import { type FailureLimiter } from './rate-limit';
 import { hashSessionToken } from './session-token';
-import {
-  authenticateUser,
-  issueSession,
-  registerUser,
-  revokeSession,
-  toAuthUser,
-} from './service';
+import { authenticateUser, issueSession, registerUser, revokeSession, toAuthUser } from './service';
 
 export interface AuthRouteOptions {
   db: DbExecutor;
