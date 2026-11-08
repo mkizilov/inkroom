@@ -4,6 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AuthProvider } from './auth/AuthContext';
 import { AppRoutes } from './App';
 
+// Konva needs a real 2D canvas, which jsdom does not provide. Canvas behaviour is covered by the
+// reducer, geometry and viewport tests, and the editor's own tests mock the scene.
+vi.mock('./canvas/CanvasEditor', () => ({ CanvasEditor: () => null }));
+
 const user = {
   id: '00000000-0000-4000-8000-000000000001',
   email: 'ada@example.com',
@@ -327,7 +331,7 @@ describe('InkRoom web app', () => {
       expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
     });
 
-    it('opens a board into the empty workspace with its title and role', async () => {
+    it('opens a board with its title, role and whiteboard region', async () => {
       mockApi({
         ...signedIn(() => json({ items: [board()], nextCursor: null })),
         'GET /api/boards/00000000-0000-4000-8000-0000000000b1': () => json({ board: board() }),
@@ -339,7 +343,7 @@ describe('InkRoom web app', () => {
 
       expect(await screen.findByRole('heading', { name: 'Roadmap' })).toBeTruthy();
       expect(screen.getByText('Your role: Owner')).toBeTruthy();
-      expect(screen.getByLabelText('Workspace').textContent).toContain('This workspace is empty');
+      expect(screen.getByRole('region', { name: 'Whiteboard' })).toBeTruthy();
     });
   });
 });

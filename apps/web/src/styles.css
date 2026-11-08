@@ -52,6 +52,79 @@ main:has(.page-header) {
   max-width: 52rem;
 }
 
+main:has(.workspace) {
+  max-width: none;
+  margin: 1.5rem auto;
+}
+
+.workspace {
+  height: calc(100vh - 12rem);
+  min-height: 24rem;
+}
+
+.canvas-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 0.5rem;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.toolbar button[aria-pressed='true'] {
+  background: #0969da;
+  color: #ffffff;
+}
+
+.toolbar output {
+  min-width: 3.5rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.toolbar-separator {
+  width: 1px;
+  align-self: stretch;
+  background: #d0d7de;
+  margin: 0 0.25rem;
+}
+
+.canvas-shell {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid #d0d7de;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.canvas-surface {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+  user-select: none;
+  cursor: crosshair;
+}
+
+.text-overlay {
+  position: absolute;
+  min-width: 6rem;
+  min-height: 2rem;
+  padding: 0;
+  border: 1px dashed #0969da;
+  background: transparent;
+  font-family: system-ui, sans-serif;
+  line-height: 1.2;
+  resize: none;
+  outline: none;
+}
+
 .page-header {
   display: flex;
   justify-content: space-between;

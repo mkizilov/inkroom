@@ -4,6 +4,7 @@ import type { Board } from '@inkroom/shared';
 import { describeError } from '../auth/messages';
 import { fetchBoard } from '../boards/api';
 import { roleLabels } from '../boards/format';
+import { CanvasEditor } from '../canvas/CanvasEditor';
 
 type BoardState =
   | { kind: 'loading' }
@@ -53,8 +54,8 @@ export function BoardPage() {
               <p>Your role: {roleLabels[state.board.role]}</p>
             </div>
           </header>
-          <section aria-label="Workspace" className="panel">
-            <p>This workspace is empty. Drawing tools arrive in a later release.</p>
+          <section aria-label="Whiteboard" className="workspace">
+            <CanvasEditor />
           </section>
         </>
       )}
