@@ -36,6 +36,7 @@ export const CLOSE_GOING_AWAY = 1001;
 export const CLOSE_PROTOCOL_ERROR = 1002;
 export const CLOSE_MESSAGE_TOO_BIG = 1009;
 export const CLOSE_POLICY_VIOLATION = 1008;
+export const CLOSE_INTERNAL_ERROR = 1011;
 export const CLOSE_TRY_AGAIN_LATER = 1013;
 
 // One WebSocket connection's state, from accept to close. The transport calls `receive` for each

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { canvasObjectSchema } from './canvas';
 
 export const MAX_BOARD_TITLE_LENGTH = 200;
 export const DEFAULT_PAGE_SIZE = 20;
@@ -52,6 +53,38 @@ export const boardIdParamsSchema = z.object({
   boardId: z.string().uuid(),
 });
 
+export const revisionKindSchema = z.enum(['compaction', 'restore']);
+
+// A revision is a stored point in a board's history. Compaction creates one, and so does a restore.
+export const revisionSchema = z.object({
+  revision: z.number().int().positive(),
+  kind: revisionKindSchema,
+  upToSeq: z.number().int().nonnegative(),
+  createdAt: z.string().datetime(),
+  createdBy: z.object({ id: z.string().uuid(), displayName: z.string() }).nullable(),
+  restoredFrom: z.number().int().positive().nullable(),
+});
+
+export const revisionListSchema = z.object({
+  items: z.array(revisionSchema),
+});
+
+export const revisionDetailSchema = z.object({
+  revision: revisionSchema,
+  objects: z.array(canvasObjectSchema),
+});
+
+export const restoreResponseSchema = z.object({
+  changed: z.boolean(),
+  revision: revisionSchema.nullable(),
+});
+
+export const revisionParamsSchema = z.object({
+  boardId: z.string().uuid(),
+  revision: z.coerce.number().int().positive().max(2_147_483_647),
+});
+
+export type Revision = z.infer<typeof revisionSchema>;
 export type BoardRole = z.infer<typeof boardRoleSchema>;
 export type Board = z.infer<typeof boardSchema>;
 export type BoardPage = z.infer<typeof boardPageSchema>;

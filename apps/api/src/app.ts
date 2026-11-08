@@ -5,15 +5,14 @@ import { createRequireUser } from './auth/middleware';
 import { createFailureLimiter } from './auth/rate-limit';
 import { registerAuthRoutes } from './auth/routes';
 import { registerBoardRoutes } from './boards/routes';
+import { registerRevisionRoutes } from './boards/revisions';
 import type { Database } from './db/client';
 import { registerErrorHandlers } from './http/errors';
 import { requireTrustedOrigin } from './http/origin';
-import {
-  DEFAULT_CONNECTION_LIMITS,
-  type ConnectionLimits,
-} from './sync/connections';
-import { SyncService } from './sync/service';
+import { PostgresBoardStore } from './persistence/store';
+import { DEFAULT_CONNECTION_LIMITS, type ConnectionLimits } from './sync/connections';
 import { registerSyncRoutes } from './sync/routes';
+import { SyncService } from './sync/service';
 import { DEFAULT_ROOM_LIMITS, type RoomLimits } from './sync/room';
 
 export const DEFAULT_WEB_ORIGIN = 'http://127.0.0.1:21173';
@@ -38,7 +37,11 @@ export interface BuildAppOptions {
   loginRateLimits?: Partial<LoginRateLimits>;
   roomLimits?: Partial<RoomLimits>;
   connectionLimits?: Partial<ConnectionLimits>;
-  // Heartbeats are a server concern, so tests can run them quickly or not at all.
+  // Compaction thresholds. Tests lower or raise them to control when compaction runs.
+  compactEvery?: number;
+  sweepThreshold?: number;
+  sweepIntervalMs?: number;
+  // Starts the heartbeat and the compaction sweep. Tests turn these off and drive them directly.
   startHeartbeat?: boolean;
 }
 
@@ -57,6 +60,9 @@ export async function buildApp(options: BuildAppOptions): Promise<InkRoomApp> {
     loginRateLimits,
     roomLimits,
     connectionLimits,
+    compactEvery,
+    sweepThreshold,
+    sweepIntervalMs,
     startHeartbeat = true,
   } = options;
   const limits = { ...DEFAULT_LOGIN_RATE_LIMITS, ...loginRateLimits };
@@ -105,18 +111,28 @@ export async function buildApp(options: BuildAppOptions): Promise<InkRoomApp> {
 
   registerBoardRoutes(app, { db: database.db, requireUser });
 
-  const connectionLimitsResolved = { ...DEFAULT_CONNECTION_LIMITS, ...connectionLimits };
+  const store = new PostgresBoardStore(database.db, (boardId, seq, error) => {
+    app.log.warn({ err: error, boardId, seq }, 'skipped an unreadable stored update');
+  });
   const sync = new SyncService({
     db: database.db,
-    roomLimits: { ...DEFAULT_ROOM_LIMITS, ...roomLimits },
-    connectionLimits: connectionLimitsResolved,
+    store,
+    roomLimits,
+    connectionLimits: { ...DEFAULT_CONNECTION_LIMITS, ...connectionLimits },
+    compactEvery,
+    sweepThreshold,
+    sweepIntervalMs,
+    logger: app.log,
   });
   registerSyncRoutes(app, { db: database.db, service: sync, webOrigin, cookieSecure });
+  registerRevisionRoutes(app, { db: database.db, store, sync, requireUser });
+
   if (startHeartbeat) {
     sync.startHeartbeat();
+    sync.startSweep();
   }
   app.addHook('onClose', async () => {
-    sync.shutdown();
+    await sync.shutdown();
   });
 
   return { app, sync };

@@ -21,6 +21,8 @@ export interface SyncClientOptions {
 
 export class SyncClient {
   readonly doc: Y.Doc;
+  // Highest sequence number the server has confirmed as stored. Updates up to it are durable.
+  acknowledgedSeq = 0;
   private readonly remoteOrigin: unknown;
 
   constructor(options: SyncClientOptions) {
@@ -38,6 +40,10 @@ export class SyncClient {
   receive(frame: Uint8Array): Uint8Array[] {
     const message = decodeClientMessage(frame, MAX_FRAME_BYTES);
     if (message.kind === 'awareness') {
+      return [];
+    }
+    if (message.kind === 'ack') {
+      this.acknowledgedSeq = Math.max(this.acknowledgedSeq, message.seq);
       return [];
     }
     switch (message.sync.kind) {

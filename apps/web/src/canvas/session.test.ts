@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Point } from '@inkroom/shared';
-import { consistencyProblems } from './doc/model';
+import { consistencyProblems } from '@inkroom/shared';
 import type { EditorAction } from './editor';
 import { EditorSession } from './session';
 

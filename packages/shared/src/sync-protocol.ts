@@ -7,6 +7,9 @@
 
 export const MESSAGE_SYNC = 0;
 export const MESSAGE_AWARENESS = 1;
+// Server-to-client only: the update with this sequence number is stored durably. This is an
+// InkRoom extension; y-protocols does not define it.
+export const MESSAGE_ACK = 2;
 
 export const SYNC_STEP1 = 0;
 export const SYNC_STEP2 = 1;
@@ -103,7 +106,8 @@ export type SyncMessage =
 
 export type ClientMessage =
   | { kind: 'sync'; sync: SyncMessage }
-  | { kind: 'awareness'; update: Uint8Array };
+  | { kind: 'awareness'; update: Uint8Array }
+  | { kind: 'ack'; seq: number };
 
 export function encodeSyncStep1(stateVector: Uint8Array): Uint8Array {
   const encoder = new Encoder();
@@ -126,6 +130,13 @@ export function encodeSyncUpdate(update: Uint8Array): Uint8Array {
   encoder.writeVarUint(MESSAGE_SYNC);
   encoder.writeVarUint(SYNC_UPDATE);
   encoder.writeVarBytes(update);
+  return encoder.toUint8Array();
+}
+
+export function encodeAck(seq: number): Uint8Array {
+  const encoder = new Encoder();
+  encoder.writeVarUint(MESSAGE_ACK);
+  encoder.writeVarUint(seq);
   return encoder.toUint8Array();
 }
 
@@ -167,6 +178,10 @@ function readMessage(decoder: Decoder, maxPayloadBytes: number): ClientMessage {
 
   if (outer === MESSAGE_AWARENESS) {
     return { kind: 'awareness', update: decoder.readVarBytes(maxPayloadBytes) };
+  }
+
+  if (outer === MESSAGE_ACK) {
+    return { kind: 'ack', seq: decoder.readVarUint() };
   }
 
   throw new ProtocolError(`unknown message type ${outer}`);

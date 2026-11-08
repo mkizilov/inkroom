@@ -4,7 +4,7 @@ import type { WebSocket } from 'ws';
 import type { DbExecutor } from '../db/client';
 import { requestSessionToken } from '../auth/middleware';
 import { resolveSession } from '../auth/service';
-import { CLOSE_POLICY_VIOLATION, type SocketLike } from './connections';
+import { CLOSE_POLICY_VIOLATION, type SocketLike, type SyncConnection } from './connections';
 import type { SyncService } from './service';
 
 export const SYNC_PATH = '/api/boards/:boardId/sync';
@@ -53,11 +53,33 @@ async function authenticate(
   return session.status === 'active' ? session.user : null;
 }
 
+type RawMessage = { data: Buffer | ArrayBuffer | Buffer[]; isBinary: boolean };
+
 export function registerSyncRoutes(app: FastifyInstance, options: SyncRouteOptions): void {
   app.get<{ Params: { boardId: string } }>(
     SYNC_PATH,
     { websocket: true },
     async (socket, request) => {
+      // Listeners go on before the async checks, so no frame is lost while the board is being
+      // authorized and loaded. Frames that arrive early are held until the connection is ready.
+      let connection: SyncConnection | null = null;
+      let closedEarly = false;
+      const early: RawMessage[] = [];
+
+      socket.on('message', (data: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+        if (connection) {
+          deliver(connection, { data, isBinary }, options);
+        } else {
+          early.push({ data, isBinary });
+        }
+      });
+      socket.on('pong', () => connection?.pong());
+      socket.on('close', () => {
+        closedEarly = connection === null;
+        connection?.markClosed();
+      });
+      socket.on('error', () => connection?.markClosed());
+
       const user = await authenticate(request, options);
       if (!user) {
         socket.close(CLOSE_POLICY_VIOLATION, 'not signed in');
@@ -74,19 +96,25 @@ export function registerSyncRoutes(app: FastifyInstance, options: SyncRouteOptio
         return;
       }
 
-      const connection = result.connection;
-      socket.on('message', (data: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
-        if (!isBinary) {
-          connection.close(CLOSE_POLICY_VIOLATION, 'binary frames only');
-          return;
-        }
-        options.service.receive(connection, toBytes(data));
-      });
-      socket.on('pong', () => connection.pong());
-      socket.on('close', () => connection.markClosed());
-      socket.on('error', () => connection.markClosed());
+      connection = result.connection;
+      if (closedEarly) {
+        connection.markClosed();
+        return;
+      }
+      for (const message of early.splice(0)) {
+        deliver(connection, message, options);
+      }
     },
   );
+}
+
+function deliver(connection: SyncConnection, message: RawMessage, options: SyncRouteOptions): void {
+  if (!message.isBinary) {
+    connection.close(CLOSE_POLICY_VIOLATION, 'binary frames only');
+    return;
+  }
+  // The service settles this promise itself; a refused frame closes only its own connection.
+  void options.service.receive(connection, toBytes(message.data));
 }
 
 function toBytes(data: Buffer | ArrayBuffer | Buffer[]): Uint8Array {

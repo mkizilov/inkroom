@@ -1,6 +1,14 @@
 import * as Y from 'yjs';
 import { describe, expect, it } from 'vitest';
-import { ProtocolError, SyncClient, encodeAwareness, encodeSyncUpdate } from '@inkroom/shared';
+import {
+  ProtocolError,
+  SyncClient,
+  encodeAck,
+  encodeAwareness,
+  encodeSyncUpdate,
+  readOrderedObjects,
+} from '@inkroom/shared';
+import { MemoryBoardStore } from '../persistence/memory-store';
 import {
   Room,
   awarenessRemoval,
@@ -9,15 +17,16 @@ import {
   type RoomLimits,
 } from './room';
 
-// Two or more simulated clients, each with its own Y.Doc, talk to one Room through in-memory
-// connections. Frames are delivered synchronously, so a test can check the state after each step.
+// Simulated clients, each with its own Y.Doc, connected to one Room through in-memory connections.
+// The store is in memory, so these tests cover the room's protocol and durability rules without a
+// database. Persistence against PostgreSQL is covered by the integration tests.
 
 const LIMITS: RoomLimits = {
   maxPayloadBytes: 64 * 1024,
   maxConnectionsPerRoom: 10,
   maxUpdateBytesPerSecond: 1024 * 1024,
 };
-
+const BOARD = 'board-1';
 const REMOTE = Symbol('remote');
 
 class FakeConnection implements RoomConnection {
@@ -37,12 +46,27 @@ class FakeConnection implements RoomConnection {
   }
 }
 
-// One simulated browser: a client document, a sync client, and the connection to the room.
+type RoomOverrides = Partial<ConstructorParameters<typeof Room>[0]>;
+
+function makeRoom(store: MemoryBoardStore, overrides: RoomOverrides = {}) {
+  const doc = new Y.Doc();
+  return new Room({
+    boardId: BOARD,
+    doc,
+    store,
+    limits: LIMITS,
+    compactEvery: 1_000,
+    now: () => 0,
+    track: () => undefined,
+    ...overrides,
+  });
+}
+
+// One simulated browser: a client document, a sync client, and its connection to the room.
 class Peer {
   readonly doc = new Y.Doc();
   readonly sync = new SyncClient({ doc: this.doc, remoteOrigin: REMOTE });
   readonly connection: FakeConnection;
-  readonly inbox: Uint8Array[] = [];
 
   constructor(
     readonly name: string,
@@ -52,67 +76,68 @@ class Peer {
     this.connection = new FakeConnection(name, name, readOnly);
   }
 
-  connect(): void {
+  async connect(): Promise<void> {
     this.room.join(this.connection);
-    this.sendFrame(this.sync.start());
-    this.pump();
+    await this.send(this.sync.start());
   }
 
-  // Delivers everything the room has sent this peer to the peer's sync client, and sends replies.
-  pump(): void {
+  // Sends a frame to the room, then hands everything the room sent back to the sync client.
+  async send(frame: Uint8Array): Promise<void> {
+    await this.room.receive(this.name, frame);
+    await this.deliver();
+  }
+
+  async deliver(): Promise<void> {
     while (this.connection.frames.length > 0) {
       const frame = this.connection.frames.shift();
-      if (!frame) {
-        break;
-      }
+      if (!frame) break;
       for (const reply of this.sync.receive(frame)) {
-        this.sendFrame(reply);
+        await this.room.receive(this.name, reply);
       }
     }
   }
 
-  sendFrame(frame: Uint8Array): void {
-    this.room.receive(this.name, frame);
-  }
-
-  // A local edit: apply it to this peer's document and send the resulting update to the room.
-  edit(change: (doc: Y.Doc) => void): void {
-    const updates: Uint8Array[] = [];
-    const handler = (update: Uint8Array) => updates.push(update);
-    this.doc.on('update', handler);
-    this.doc.transact(() => change(this.doc));
-    this.doc.off('update', handler);
-    for (const update of updates) {
-      this.sendFrame(encodeSyncUpdate(update));
+  // A local edit, sent to the room as an update frame.
+  async edit(change: (doc: Y.Doc) => void): Promise<void> {
+    for (const update of captureUpdates(this.doc, change)) {
+      await this.send(encodeSyncUpdate(update));
     }
   }
 
-  // Delivers room frames to this peer, then lets the room catch up with any replies.
-  deliver(): void {
-    this.pump();
+  objectIds(): string[] {
+    return ids(this.doc);
   }
 }
 
-// Relays are delivered when a peer is pumped. These helpers run pumps until nothing is pending.
-function settle(...peers: Peer[]): void {
-  for (let round = 0; round < 10; round += 1) {
+function captureUpdates(doc: Y.Doc, change: (doc: Y.Doc) => void): Uint8Array[] {
+  const updates: Uint8Array[] = [];
+  const record = (update: Uint8Array) => updates.push(update);
+  doc.on('update', record);
+  doc.transact(() => change(doc));
+  doc.off('update', record);
+  return updates;
+}
+
+async function settle(...peers: Peer[]): Promise<void> {
+  for (let round = 0; round < 3; round += 1) {
     for (const peer of peers) {
-      peer.deliver();
+      await peer.deliver();
     }
   }
 }
 
-function connectAll(room: Room, names: string[], readOnly: string[] = []): Peer[] {
+async function connectAll(room: Room, names: string[], readOnly: string[] = []): Promise<Peer[]> {
   const peers = names.map((name) => new Peer(name, room, readOnly.includes(name)));
   for (const peer of peers) {
-    peer.connect();
+    await peer.connect();
   }
-  settle(...peers);
+  await settle(...peers);
   return peers;
 }
 
 function textObject(id: string, text: string): Y.Map<unknown> {
   const map = new Y.Map<unknown>();
+  map.set('id', id);
   map.set('type', 'text');
   map.set('x', 0);
   map.set('y', 0);
@@ -122,227 +147,346 @@ function textObject(id: string, text: string): Y.Map<unknown> {
   const content = new Y.Text();
   content.insert(0, text);
   map.set('text', content);
-  map.set('id', id);
   return map;
 }
 
-function objectIds(doc: Y.Doc): string[] {
+function ids(doc: Y.Doc): string[] {
   return [...doc.getMap<Y.Map<unknown>>('objects').keys()].sort();
 }
 
-describe('two simulated clients in one room', () => {
-  it('synchronise the initial state to a client that joins later', () => {
-    const room = new Room('board-1', LIMITS);
-    const [first] = connectAll(room, ['first']);
-    first?.edit((doc) => doc.getMap('objects').set('a', textObject('a', 'hello')));
+function textOf(doc: Y.Doc, id: string): string | undefined {
+  return doc.getMap<Y.Map<unknown>>('objects').get(id)?.get('text')?.toString();
+}
 
-    const [late] = connectAll(room, ['late']);
+// The bytes of the Yjs update produced by one change to a fresh document.
+function updateOf(change: (doc: Y.Doc) => void): Uint8Array {
+  return Y.mergeUpdates(captureUpdates(new Y.Doc(), change));
+}
 
-    expect(late?.doc.getMap('objects').has('a')).toBe(true);
-    expect(late?.doc.getMap<Y.Map<unknown>>('objects').get('a')?.get('text')?.toString()).toBe(
-      'hello',
-    );
+describe('two or more simulated clients in one room', () => {
+  it('synchronise the initial state to a client that joins later', async () => {
+    const store = new MemoryBoardStore();
+    const room = makeRoom(store);
+    const [first] = await connectAll(room, ['first']);
+    await first?.edit((doc) => doc.getMap('objects').set('a', textObject('a', 'hello')));
+
+    const [late] = await connectAll(room, ['late']);
+
+    expect(late?.objectIds()).toEqual(['a']);
+    expect(textOf(late?.doc as Y.Doc, 'a')).toBe('hello');
   });
 
-  it('broadcast a drawn object to the other client', () => {
-    const room = new Room('board-1', LIMITS);
-    const [alice, bob] = connectAll(room, ['alice', 'bob']);
+  it('broadcast a drawn object to the other client', async () => {
+    const room = makeRoom(new MemoryBoardStore());
+    const [alice, bob] = await connectAll(room, ['alice', 'bob']);
 
-    alice?.edit((doc) => doc.getMap('objects').set('rect', textObject('rect', 'box')));
-    settle(alice as Peer, bob as Peer);
+    await alice?.edit((doc) => doc.getMap('objects').set('rect', textObject('rect', 'box')));
+    await settle(alice as Peer, bob as Peer);
 
-    expect(objectIds(bob?.doc as Y.Doc)).toEqual(['rect']);
-    expect(objectIds(alice?.doc as Y.Doc)).toEqual(['rect']);
+    expect(bob?.objectIds()).toEqual(['rect']);
+    expect(alice?.objectIds()).toEqual(['rect']);
   });
 
-  it('broadcast moves and deletions, and keep both documents equal', () => {
-    const room = new Room('board-1', LIMITS);
-    const [alice, bob] = connectAll(room, ['alice', 'bob']);
-    alice?.edit((doc) => {
+  it('broadcast moves and deletions, and keep both documents equal', async () => {
+    const room = makeRoom(new MemoryBoardStore());
+    const [alice, bob] = await connectAll(room, ['alice', 'bob']);
+    await alice?.edit((doc) => {
       doc.getMap('objects').set('a', textObject('a', 'one'));
       doc.getMap('objects').set('b', textObject('b', 'two'));
     });
-    settle(alice as Peer, bob as Peer);
 
-    bob?.edit((doc) => {
-      doc.getMap<Y.Map<unknown>>('objects').get('a')?.set('x', 120);
-    });
-    settle(alice as Peer, bob as Peer);
+    await settle(alice as Peer, bob as Peer);
+    await bob?.edit((doc) => doc.getMap<Y.Map<unknown>>('objects').get('a')?.set('x', 120));
+    await alice?.edit((doc) => doc.getMap('objects').delete('b'));
+    await settle(alice as Peer, bob as Peer);
+
+    expect(bob?.objectIds()).toEqual(['a']);
     expect(alice?.doc.getMap<Y.Map<unknown>>('objects').get('a')?.get('x')).toBe(120);
-
-    alice?.edit((doc) => doc.getMap('objects').delete('b'));
-    settle(alice as Peer, bob as Peer);
-
-    expect(objectIds(bob?.doc as Y.Doc)).toEqual(['a']);
-    expect(bob?.doc.getMap<Y.Map<unknown>>('objects').get('a')?.get('x')).toBe(120);
     expect(Y.encodeStateVector(alice?.doc as Y.Doc)).toEqual(
       Y.encodeStateVector(bob?.doc as Y.Doc),
     );
   });
 
-  it('merge concurrent text edits from both clients', () => {
-    const room = new Room('board-1', LIMITS);
-    const [alice, bob] = connectAll(room, ['alice', 'bob']);
-    alice?.edit((doc) => doc.getMap('objects').set('t', textObject('t', 'one two')));
-    settle(alice as Peer, bob as Peer);
+  it('merge concurrent text edits from both clients', async () => {
+    const room = makeRoom(new MemoryBoardStore());
+    const [alice, bob] = await connectAll(room, ['alice', 'bob']);
+    await alice?.edit((doc) => doc.getMap('objects').set('t', textObject('t', 'one two')));
+    await settle(alice as Peer, bob as Peer);
 
-    alice?.edit((doc) => {
-      const text = doc.getMap<Y.Map<unknown>>('objects').get('t')?.get('text') as Y.Text;
-      text.insert(0, 'A ');
+    const aliceUpdates = captureUpdates(alice?.doc as Y.Doc, (doc) => {
+      (doc.getMap<Y.Map<unknown>>('objects').get('t')?.get('text') as Y.Text).insert(0, 'A ');
     });
-    bob?.edit((doc) => {
+    const bobUpdates = captureUpdates(bob?.doc as Y.Doc, (doc) => {
       const text = doc.getMap<Y.Map<unknown>>('objects').get('t')?.get('text') as Y.Text;
       text.insert(text.length, ' Z');
     });
-    settle(alice as Peer, bob as Peer);
+    for (const update of aliceUpdates) await alice?.send(encodeSyncUpdate(update));
+    for (const update of bobUpdates) await bob?.send(encodeSyncUpdate(update));
+    await settle(alice as Peer, bob as Peer);
 
-    const textOf = (peer?: Peer) =>
-      peer?.doc.getMap<Y.Map<unknown>>('objects').get('t')?.get('text')?.toString();
-    const aliceText = textOf(alice);
-    const bobText = textOf(bob);
-    expect(aliceText).toBe(bobText);
-    expect(aliceText).toContain('A ');
-    expect(aliceText).toContain(' Z');
+    expect(textOf(alice?.doc as Y.Doc, 't')).toBe(textOf(bob?.doc as Y.Doc, 't'));
+    expect(textOf(alice?.doc as Y.Doc, 't')).toContain('A ');
+    expect(textOf(alice?.doc as Y.Doc, 't')).toContain(' Z');
   });
 
-  it('keep two clients in step through many interleaved edits', () => {
-    const room = new Room('board-1', LIMITS);
-    const [alice, bob] = connectAll(room, ['alice', 'bob']);
+  it('keep two clients in step through many interleaved edits', async () => {
+    const room = makeRoom(new MemoryBoardStore());
+    const [alice, bob] = await connectAll(room, ['alice', 'bob']);
     const peers = [alice as Peer, bob as Peer];
 
     for (let step = 0; step < 40; step += 1) {
       const actor = peers[step % 2] as Peer;
-      actor.edit((doc) => {
+      await actor.edit((doc) => {
         const objects = doc.getMap<Y.Map<unknown>>('objects');
-        if (step % 3 === 2 && objects.size > 0) {
-          const [victim] = [...objects.keys()].sort();
-          if (victim) objects.delete(victim);
+        const [victim] = [...objects.keys()].sort();
+        if (step % 3 === 2 && victim) {
+          objects.delete(victim);
         } else {
           objects.set(`obj-${step}`, textObject(`obj-${step}`, `note ${step}`));
         }
       });
-      settle(...peers);
+      await settle(...peers);
     }
 
-    expect(objectIds(alice?.doc as Y.Doc)).toEqual(objectIds(bob?.doc as Y.Doc));
-    expect(objectIds(alice?.doc as Y.Doc).length).toBeGreaterThan(0);
+    expect(alice?.objectIds()).toEqual(bob?.objectIds());
+    expect((alice?.objectIds() ?? []).length).toBeGreaterThan(0);
   });
 
-  it('let a client that reconnects catch up on what it missed', () => {
-    const room = new Room('board-1', LIMITS);
-    const [alice, bob] = connectAll(room, ['alice', 'bob']);
-    alice?.edit((doc) => doc.getMap('objects').set('before', textObject('before', 'x')));
-    settle(alice as Peer, bob as Peer);
+  it('let a client that reconnects catch up on what it missed', async () => {
+    const room = makeRoom(new MemoryBoardStore());
+    const [alice, bob] = await connectAll(room, ['alice', 'bob']);
+    await alice?.edit((doc) => doc.getMap('objects').set('before', textObject('before', 'x')));
+    await settle(alice as Peer, bob as Peer);
 
     room.leave('bob');
-    alice?.edit((doc) => doc.getMap('objects').set('during', textObject('during', 'y')));
-    settle(alice as Peer);
+    await alice?.edit((doc) => doc.getMap('objects').set('during', textObject('during', 'y')));
 
     const returning = new Peer('bob', room);
     returning.doc.getMap('objects').set('offline', textObject('offline', 'z'));
-    returning.connect();
-    settle(alice as Peer, returning);
+    await returning.connect();
+    await settle(alice as Peer, returning);
 
-    expect(objectIds(returning.doc)).toEqual(['before', 'during', 'offline']);
-    expect(objectIds(alice?.doc as Y.Doc)).toEqual(['before', 'during', 'offline']);
+    expect(returning.objectIds()).toEqual(['before', 'during', 'offline']);
+    expect(alice?.objectIds()).toEqual(['before', 'during', 'offline']);
+  });
+});
+
+describe('durability', () => {
+  it('stores each client update before any other client sees it', async () => {
+    const store = new MemoryBoardStore();
+    const room = makeRoom(store);
+    const [alice, bob] = await connectAll(room, ['alice', 'bob']);
+
+    await alice?.edit((doc) => doc.getMap('objects').set('a', textObject('a', 'stored')));
+
+    expect(store.updates.get(BOARD)?.length ?? 0).toBeGreaterThan(0);
+    expect(bob?.objectIds()).toEqual(['a']);
+  });
+
+  it('acknowledges a stored update to its sender with the stored sequence number', async () => {
+    const store = new MemoryBoardStore();
+    const room = makeRoom(store);
+    const [alice] = await connectAll(room, ['alice']);
+
+    await alice?.edit((doc) => doc.getMap('objects').set('a', textObject('a', 'x')));
+
+    expect(alice?.sync.acknowledgedSeq).toBeGreaterThan(0);
+    expect(alice?.sync.acknowledgedSeq).toBe(store.updates.get(BOARD)?.at(-1)?.seq);
+  });
+
+  it('applies, broadcasts and acknowledges nothing when the write fails', async () => {
+    const store = new MemoryBoardStore();
+    const room = makeRoom(store);
+    const [alice, bob] = await connectAll(room, ['alice', 'bob']);
+    const framesBefore = bob?.connection.frames.length ?? 0;
+    store.failNextAppends = 1;
+
+    const update = updateOf((doc) => doc.getMap('objects').set('lost', textObject('lost', 'x')));
+    await expect(room.receive('alice', encodeSyncUpdate(update))).rejects.toThrow(/simulated/);
+
+    expect(room.doc.getMap('objects').has('lost')).toBe(false);
+    expect(bob?.connection.frames.length ?? 0).toBe(framesBefore);
+    expect(alice?.sync.acknowledgedSeq).toBe(0);
+  });
+
+  it('accepts the same update when the client sends it again after a failed write', async () => {
+    const store = new MemoryBoardStore();
+    const room = makeRoom(store);
+    const [alice] = await connectAll(room, ['alice']);
+    store.failNextAppends = 1;
+    const update = updateOf((doc) => doc.getMap('objects').set('retry', textObject('retry', 'x')));
+
+    await expect(room.receive('alice', encodeSyncUpdate(update))).rejects.toThrow();
+    await room.receive('alice', encodeSyncUpdate(update));
+
+    expect(room.doc.getMap('objects').has('retry')).toBe(true);
+    expect(alice?.sync.acknowledgedSeq).toBeGreaterThan(0);
+  });
+
+  it('rebuilds the same document from the stored log after the room is released', async () => {
+    const store = new MemoryBoardStore();
+    const first = makeRoom(store);
+    const [alice] = await connectAll(first, ['alice']);
+    await alice?.edit((doc) => doc.getMap('objects').set('kept', textObject('kept', 'persisted')));
+    await alice?.edit((doc) => doc.getMap('objects').set('second', textObject('second', 'too')));
+    first.destroy();
+
+    const restarted = makeRoom(store, { doc: await store.load(BOARD) });
+    const [bob] = await connectAll(restarted, ['bob']);
+
+    expect(bob?.objectIds()).toEqual(['kept', 'second']);
+    expect(textOf(bob?.doc as Y.Doc, 'kept')).toBe('persisted');
+  });
+
+  it('does not store an update that changes nothing', async () => {
+    const store = new MemoryBoardStore();
+    const room = makeRoom(store);
+    await connectAll(room, ['alice']);
+
+    await room.receive('alice', encodeSyncUpdate(new Uint8Array([0, 0])));
+
+    expect(store.updates.get(BOARD)).toBeUndefined();
+  });
+
+  it('does not write a change applied as a restore, and tells the connected clients', async () => {
+    const store = new MemoryBoardStore();
+    const room = makeRoom(store);
+    const [bob] = await connectAll(room, ['bob']);
+    const restored = updateOf((doc) =>
+      doc.getMap('objects').set('restored', textObject('r', 'back')),
+    );
+
+    await room.applyPersisted(restored);
+    await settle(bob as Peer);
+
+    expect(store.updates.get(BOARD)).toBeUndefined();
+    expect(bob?.objectIds()).toEqual(['restored']);
+  });
+
+  it('asks the store to compact after the configured number of stored updates', async () => {
+    const work: Promise<unknown>[] = [];
+    const store = new MemoryBoardStore();
+    let compactions = 0;
+    store.compact = async () => {
+      compactions += 1;
+      return null;
+    };
+    const room = makeRoom(store, { compactEvery: 3, track: (promise) => work.push(promise) });
+    const [alice] = await connectAll(room, ['alice']);
+
+    for (let index = 0; index < 3; index += 1) {
+      await alice?.edit((doc) =>
+        doc.getMap('objects').set(`n${index}`, textObject(`n${index}`, 'x')),
+      );
+    }
+    await Promise.all(work);
+
+    expect(compactions).toBe(1);
   });
 });
 
 describe('read-only connections', () => {
-  it('receive the document and cannot change it', () => {
-    const room = new Room('board-1', LIMITS);
-    const [editor, viewer] = connectAll(room, ['editor', 'viewer'], ['viewer']);
-    editor?.edit((doc) => doc.getMap('objects').set('a', textObject('a', 'shared')));
-    settle(editor as Peer, viewer as Peer);
-    expect(objectIds(viewer?.doc as Y.Doc)).toEqual(['a']);
+  it('receive the document and cannot change it', async () => {
+    const store = new MemoryBoardStore();
+    const room = makeRoom(store);
+    const [editor, viewer] = await connectAll(room, ['editor', 'viewer'], ['viewer']);
+    await editor?.edit((doc) => doc.getMap('objects').set('a', textObject('a', 'shared')));
+    await settle(editor as Peer, viewer as Peer);
+    expect(viewer?.objectIds()).toEqual(['a']);
 
-    // The viewer's own copy keeps the local edit, since nothing reverts it on the client. The
-    // room and the other editors must not see it. See docs/sync.md for the viewer-echo limit.
-    viewer?.edit((doc) => doc.getMap('objects').set('viewer-only', textObject('v', 'nope')));
-    settle(editor as Peer, viewer as Peer);
+    // The viewer's own copy keeps the local edit, since nothing reverts it on the client. The room
+    // and the other editors must not see it, and nothing may be stored. See docs/sync.md.
+    await viewer?.edit((doc) => doc.getMap('objects').set('viewer-only', textObject('v', 'nope')));
+    await settle(editor as Peer, viewer as Peer);
 
-    expect(objectIds(room.doc)).toEqual(['a']);
-    expect(objectIds(editor?.doc as Y.Doc)).toEqual(['a']);
+    expect(ids(room.doc)).toEqual(['a']);
+    expect(editor?.objectIds()).toEqual(['a']);
+    expect(store.updates.get(BOARD)?.length).toBe(1);
   });
 
-  it('keep the viewer connected after its writes are dropped', () => {
-    const room = new Room('board-1', LIMITS);
-    const [, viewer] = connectAll(room, ['editor', 'viewer'], ['viewer']);
-    viewer?.edit((doc) => doc.getMap('objects').set('nope', textObject('n', 'x')));
+  it('keep the viewer connected after its writes are dropped', async () => {
+    const room = makeRoom(new MemoryBoardStore());
+    const [, viewer] = await connectAll(room, ['editor', 'viewer'], ['viewer']);
+    await viewer?.edit((doc) => doc.getMap('objects').set('nope', textObject('n', 'x')));
 
     expect(room.has('viewer')).toBe(true);
   });
 });
 
-// The bytes of the Yjs update produced by one change to a fresh document.
-function updateOf(change: (doc: Y.Doc) => void): Uint8Array {
-  const doc = new Y.Doc();
-  const updates: Uint8Array[] = [];
-  doc.on('update', (update: Uint8Array) => updates.push(update));
-  change(doc);
-  return Y.mergeUpdates(updates);
-}
-
 describe('frame and resource limits', () => {
-  it('rejects a frame larger than the payload limit before decoding it', () => {
-    const room = new Room('board-1', LIMITS);
+  it('rejects a frame larger than the payload limit before decoding it', async () => {
+    const room = makeRoom(new MemoryBoardStore());
     room.join(new FakeConnection('a', 'a'));
     const huge = encodeSyncUpdate(new Uint8Array(LIMITS.maxPayloadBytes + 1));
 
-    expect(() => room.receive('a', huge)).toThrow(ProtocolError);
+    await expect(room.receive('a', huge)).rejects.toThrow(/exceeds|limit/);
   });
 
-  it('rejects a malformed frame with a protocol error', () => {
-    const room = new Room('board-1', LIMITS);
+  it('rejects a malformed frame with a protocol error', async () => {
+    const room = makeRoom(new MemoryBoardStore());
     room.join(new FakeConnection('a', 'a'));
 
-    expect(() => room.receive('a', new Uint8Array([9, 9, 9]))).toThrow(ProtocolError);
+    await expect(room.receive('a', new Uint8Array([9, 9, 9]))).rejects.toThrow(ProtocolError);
   });
 
-  it('rejects an update that the document cannot apply', () => {
-    const room = new Room('board-1', LIMITS);
+  it('refuses an update whose structure is invalid, and stores nothing', async () => {
+    const store = new MemoryBoardStore();
+    const room = makeRoom(store);
     room.join(new FakeConnection('a', 'a'));
 
-    expect(() => room.receive('a', encodeSyncUpdate(new Uint8Array([0xff, 0xff, 0xff])))).toThrow(
-      ProtocolError,
-    );
+    await expect(
+      room.receive('a', encodeSyncUpdate(new Uint8Array([0xff, 0xff, 0xff]))),
+    ).rejects.toThrow(ProtocolError);
+    expect(store.updates.get(BOARD)).toBeUndefined();
   });
 
-  it('enforces the update rate per connection, not per room', () => {
+  it('refuses a client that tries to send an acknowledgement', async () => {
+    const room = makeRoom(new MemoryBoardStore());
+    room.join(new FakeConnection('a', 'a'));
+
+    await expect(room.receive('a', encodeAck(5))).rejects.toThrow(/acknowledgements/);
+  });
+
+  it('enforces the update rate per connection, not per room', async () => {
     const now = { value: 0 };
-    const room = new Room(
-      'board-1',
-      { ...LIMITS, maxUpdateBytesPerSecond: 100 },
-      () => now.value,
-    );
-    const spammer = new FakeConnection('spammer', 'spammer');
-    const quiet = new FakeConnection('quiet', 'quiet');
-    room.join(spammer);
-    room.join(quiet);
+    const store = new MemoryBoardStore();
+    const room = makeRoom(store, {
+      limits: { ...LIMITS, maxUpdateBytesPerSecond: 100 },
+      now: () => now.value,
+    });
+    room.join(new FakeConnection('spammer', 'spammer'));
+    room.join(new FakeConnection('quiet', 'quiet'));
 
     const big = updateOf((doc) => doc.getMap('objects').set('k', 'x'.repeat(200)));
     const small = updateOf((doc) => doc.getMap('objects').set('n', 1));
     expect(small.byteLength).toBeLessThan(100);
 
-    // The spammer exhausts its own budget, and the quiet connection is still served.
-    expect(() => room.receive('spammer', encodeSyncUpdate(big))).toThrow(/rate limit/);
-    expect(() => room.receive('quiet', encodeSyncUpdate(small))).not.toThrow();
+    await expect(room.receive('spammer', encodeSyncUpdate(big))).rejects.toThrow(/rate limit/);
+    await expect(room.receive('quiet', encodeSyncUpdate(small))).resolves.toBeUndefined();
 
-    // Once the window rolls over the spammer may write again.
     now.value = 1500;
-    expect(() => room.receive('spammer', encodeSyncUpdate(small))).not.toThrow();
+    await expect(room.receive('spammer', encodeSyncUpdate(small))).resolves.toBeUndefined();
   });
 
   it('refuses new connections once the room is full', () => {
-    const room = new Room('board-1', { ...LIMITS, maxConnectionsPerRoom: 2 });
+    const room = makeRoom(new MemoryBoardStore(), {
+      limits: { ...LIMITS, maxConnectionsPerRoom: 2 },
+    });
 
     expect(room.join(new FakeConnection('a', 'a')).ok).toBe(true);
     expect(room.join(new FakeConnection('b', 'b')).ok).toBe(true);
     expect(room.join(new FakeConnection('c', 'c'))).toEqual({ ok: false, reason: 'full' });
   });
 
-  it('drops a connection whose socket cannot take frames, without affecting the others', () => {
-    const room = new Room('board-1', LIMITS);
+  it('refuses joins after the room has ended', () => {
+    const room = makeRoom(new MemoryBoardStore());
+    room.destroy();
+
+    expect(room.join(new FakeConnection('a', 'a'))).toEqual({ ok: false, reason: 'closed' });
+  });
+
+  it('drops a connection whose socket cannot take frames, leaving the others', async () => {
+    const room = makeRoom(new MemoryBoardStore());
     const healthy = new FakeConnection('healthy', 'healthy');
     const broken = new FakeConnection('broken', 'broken');
     const sender = new FakeConnection('sender', 'sender');
@@ -351,11 +495,8 @@ describe('frame and resource limits', () => {
     room.join(sender);
     broken.alive = false;
 
-    const doc = new Y.Doc();
-    const updates: Uint8Array[] = [];
-    doc.on('update', (update: Uint8Array) => updates.push(update));
-    doc.getMap('objects').set('k', 'v');
-    room.receive('sender', encodeSyncUpdate(updates[0] as Uint8Array));
+    const update = updateOf((doc) => doc.getMap('objects').set('k', 'v'));
+    await room.receive('sender', encodeSyncUpdate(update));
 
     expect(room.has('broken')).toBe(false);
     expect(room.has('healthy')).toBe(true);
@@ -379,20 +520,20 @@ describe('awareness and presence', () => {
     expect(readAwareness(new Uint8Array([0xff]))).toEqual([]);
   });
 
-  it('relays presence updates to other clients', () => {
-    const room = new Room('board-1', LIMITS);
-    const [alice, bob] = connectAll(room, ['alice', 'bob']);
+  it('relays presence updates to other clients', async () => {
+    const room = makeRoom(new MemoryBoardStore());
+    const [alice, bob] = await connectAll(room, ['alice', 'bob']);
     const presence = awarenessRemoval([{ clientId: 42, clock: 1 }]);
 
-    alice?.sendFrame(encodeAwareness(presence));
+    await alice?.send(encodeAwareness(presence));
 
     expect(bob?.connection.frames.length).toBeGreaterThan(0);
   });
 
-  it('announces a departed client as gone, with a clock newer than its last update', () => {
-    const room = new Room('board-1', LIMITS);
-    const [alice, bob] = connectAll(room, ['alice', 'bob']);
-    alice?.sendFrame(encodeAwareness(awarenessRemoval([{ clientId: 42, clock: 5 }])));
+  it('announces a departed client as gone, with a clock newer than its last update', async () => {
+    const room = makeRoom(new MemoryBoardStore());
+    const [alice, bob] = await connectAll(room, ['alice', 'bob']);
+    await alice?.send(encodeAwareness(awarenessRemoval([{ clientId: 42, clock: 5 }])));
     bob?.connection.frames.splice(0);
 
     room.leave('alice');
@@ -403,9 +544,9 @@ describe('awareness and presence', () => {
   });
 });
 
-describe('room lifecycle', () => {
+describe('room lifecycle and recovery', () => {
   it('reports the number of connections it holds', () => {
-    const room = new Room('board-1', LIMITS);
+    const room = makeRoom(new MemoryBoardStore());
     room.join(new FakeConnection('a', 'a'));
     room.join(new FakeConnection('b', 'b'));
     room.leave('a');
@@ -413,13 +554,27 @@ describe('room lifecycle', () => {
     expect(room.size).toBe(1);
   });
 
-  it('ignores frames from a connection that has left', () => {
-    const room = new Room('board-1', LIMITS);
+  it('ignores frames from a connection that has left', async () => {
+    const room = makeRoom(new MemoryBoardStore());
     room.join(new FakeConnection('a', 'a'));
     room.leave('a');
 
-    expect(() => room.receive('a', encodeSyncUpdate(new Uint8Array(0)))).toThrow(
+    await expect(room.receive('a', encodeSyncUpdate(new Uint8Array(0)))).rejects.toThrow(
       /not in this room/,
     );
+  });
+
+  it('rebuilds typed objects in z-order from the stored log', async () => {
+    const store = new MemoryBoardStore();
+    const room = makeRoom(store);
+    const [alice] = await connectAll(room, ['alice']);
+    await alice?.edit((doc) => doc.getMap('objects').set('a', textObject('a', 'first')));
+    await alice?.edit((doc) => doc.getMap('objects').set('b', textObject('b', 'second')));
+
+    const rebuilt = readOrderedObjects(
+      (await store.load(BOARD)).getMap<Y.Map<unknown>>('objects'),
+    ).objects;
+
+    expect(rebuilt.map((object) => object.id)).toEqual(['a', 'b']);
   });
 });

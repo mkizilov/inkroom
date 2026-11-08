@@ -4,6 +4,7 @@ import {
   Encoder,
   ProtocolError,
   decodeClientMessage,
+  encodeAck,
   encodeAwareness,
   encodeSyncStep1,
   encodeSyncStep2,
@@ -120,6 +121,10 @@ describe('client messages', () => {
 
   it('rejects an empty frame', () => {
     expect(() => decodeClientMessage(new Uint8Array(0), MAX)).toThrow(/truncated/);
+  });
+
+  it('decodes a server acknowledgement with its sequence number', () => {
+    expect(decodeClientMessage(encodeAck(123_456), MAX)).toEqual({ kind: 'ack', seq: 123_456 });
   });
 
   it('rejects trailing bytes after a complete message', () => {

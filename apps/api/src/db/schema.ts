@@ -5,6 +5,7 @@ import {
   customType,
   foreignKey,
   index,
+  integer,
   pgEnum,
   pgTable,
   text,
@@ -160,6 +161,10 @@ export const boardSnapshots = pgTable(
     boardId: uuid('board_id').notNull(),
     upToSeq: bigint('up_to_seq', { mode: 'number' }).notNull(),
     state: bytea('state').notNull(),
+    revision: integer('revision').notNull(),
+    kind: text('kind').notNull().default('compaction'),
+    createdBy: uuid('created_by'),
+    restoredFrom: integer('restored_from'),
     ...timestamps,
   },
   (t) => [
@@ -171,5 +176,17 @@ export const boardSnapshots = pgTable(
     unique('board_snapshots_board_up_to_seq_unique').on(t.boardId, t.upToSeq),
     check('board_snapshots_up_to_seq_positive', sql.raw('up_to_seq > 0')),
     check('board_snapshots_state_size', sql.raw('octet_length(state) between 1 and 16777216')),
+    unique('board_snapshots_board_revision_unique').on(t.boardId, t.revision),
+    check('board_snapshots_revision_positive', sql.raw('revision > 0')),
+    check('board_snapshots_kind_check', sql.raw("kind IN ('compaction', 'restore')")),
+    check(
+      'board_snapshots_restored_from_check',
+      sql.raw('(kind = \'restore\') = (restored_from IS NOT NULL)'),
+    ),
+    foreignKey({
+      name: 'board_snapshots_created_by_fkey',
+      columns: [t.createdBy],
+      foreignColumns: [users.id],
+    }).onDelete('set null'),
   ],
 );

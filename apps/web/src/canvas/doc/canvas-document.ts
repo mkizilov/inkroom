@@ -5,7 +5,12 @@ import {
   type CanvasObject,
   type CanvasOperation,
 } from '@inkroom/shared';
-import { objectsMapOf, readOrderedObjects, writeOperations, type ObjectsMap } from './model';
+import {
+  objectsMapOf,
+  readOrderedObjects,
+  writeOperations,
+  type ObjectsMap,
+} from '@inkroom/shared';
 
 // Origins decide what local undo can see. Local edits are tracked; remote updates are applied with
 // REMOTE_ORIGIN and are not tracked, so undo never reverts another person's change.

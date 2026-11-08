@@ -119,6 +119,10 @@ Run from the repository root.
 - **Real-time sync**: each board has a Yjs room over an authenticated WebSocket. Editors and viewers
   are enforced per connection, with frame, rate and connection limits, heartbeats, and reconnection
   with backoff. See [docs/sync.md](docs/sync.md).
+- **Persistence and history**: updates are stored in PostgreSQL before they are applied or
+  acknowledged, boards are rebuilt from the store after a restart, compaction folds the log into
+  revision snapshots, and owners can restore a revision. See
+  [docs/persistence.md](docs/persistence.md).
 - **Web (`apps/web`)**: React 19 with Vite. The app talks to the API only through relative `/api`
   URLs, which the dev server proxies, so no CORS configuration is needed in development.
 
@@ -163,8 +167,9 @@ Node 22. The `pnpm-lock.yaml` file must be committed for the frozen install to s
   versioned migrations, repository modules, seed data, integration tests, authentication
   (register, login, logout, current user, session expiry and revocation, rate limiting, CSRF
   origin checks) with login and registration pages, and board management with a dashboard.
-- Not implemented: canvas persistence, membership management, live revocation of access, OAuth or
-  social sign-in, Yjs update compaction, email verification, password reset, production Docker images.
+- Not implemented: a revision browser or restore control in the web app, membership management,
+  live revocation of access, multi-process sync, OAuth or social sign-in, email verification,
+  password reset, production Docker images.
 
 ## Contributing
 

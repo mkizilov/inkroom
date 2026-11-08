@@ -1,13 +1,14 @@
 import * as Y from 'yjs';
 import { describe, expect, it } from 'vitest';
-import { OperationError, type CanvasObject, type CanvasOperation } from '@inkroom/shared';
+import { type CanvasObject } from './canvas';
+import { OperationError, type CanvasOperation } from './canvas-operations';
 import {
   consistencyProblems,
   objectsMapOf,
   readOrderedObjects,
   writeOperations,
   type ObjectMap,
-} from './model';
+} from './yjs-model';
 
 const style = { stroke: '#1f2328', strokeWidth: 2 };
 const uuid = (n: number) => `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;

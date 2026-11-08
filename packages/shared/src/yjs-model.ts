@@ -1,11 +1,6 @@
 import * as Y from 'yjs';
-import {
-  OperationError,
-  canvasObjectSchema,
-  type CanvasObject,
-  type CanvasOperation,
-  type ObjectChanges,
-} from '@inkroom/shared';
+import { canvasObjectSchema, type CanvasObject } from './canvas';
+import { OperationError, type CanvasOperation, type ObjectChanges } from './canvas-operations';
 
 // Yjs representation of a board's objects. The typed model in @inkroom/shared stays the contract:
 // this module converts between that model and Yjs in both directions.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { OperationError, diffDocuments, type CanvasObject } from '@inkroom/shared';
-import { consistencyProblems } from './model';
+import { consistencyProblems } from '@inkroom/shared';
 import { CanvasDocument, LOCAL_ORIGIN, REMOTE_ORIGIN } from './canvas-document';
 
 const style = { stroke: '#1f2328', strokeWidth: 2 };

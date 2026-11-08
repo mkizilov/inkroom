@@ -109,7 +109,8 @@ rejection of operations that do not fit, and malformed entries (which are report
 
 - **Networking is in `docs/sync.md`.** Updates produced by `onLocalUpdate` are sent over a WebSocket,
   and received updates go through `applyRemote`. The server holds the room's document in memory.
-- **No persistence.** Nothing is written to the database. A reload starts with an empty document.
+- **Persistence is in `docs/persistence.md`.** Updates are stored as they are made, and the board is
+  rebuilt from the stored log on the next connection.
 - **No garbage collection of deleted objects.** Yjs keeps tombstones, so the document grows with
   the history of edits. Snapshots and compaction belong with the persistence work.
 - **Array fields are last writer wins.** Pen points and the arrow and line end points change as a

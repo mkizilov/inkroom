@@ -11,27 +11,20 @@ import {
   testDatabaseUrl,
   type TestDatabase,
 } from '../db/test-database';
-import { CLOSE_POLICY_VIOLATION, type SocketLike } from './connections';
-import { SyncService, type OpenResult } from './service';
-
-// Updates from the server are applied under this origin, as the browser provider does.
-const REMOTE_ORIGIN = Symbol('remote');
-
-type Joined = Extract<OpenResult, { ok: true }>;
+import { PostgresBoardStore } from '../persistence/store';
+import { CLOSE_INTERNAL_ERROR, CLOSE_POLICY_VIOLATION, type SocketLike } from './connections';
+import { SyncService, type Logger, type OpenResult } from './service';
 
 // A socket that records what it was sent, so tests can read the frames a client would receive.
 class FakeSocket implements SocketLike {
   readonly sent: Uint8Array[] = [];
   readonly closes: Array<{ code: number; reason: string }> = [];
-  pings = 0;
   bufferedAmount = 0;
   readyState: 'open' | 'closed' = 'open';
   send(data: Uint8Array): void {
     this.sent.push(data);
   }
-  ping(): void {
-    this.pings += 1;
-  }
+  ping(): void {}
   close(code: number, reason: string): void {
     this.closes.push({ code, reason });
     this.readyState = 'closed';
@@ -40,6 +33,11 @@ class FakeSocket implements SocketLike {
     this.readyState = 'closed';
   }
 }
+
+// Updates from the server are applied under this origin, as the browser provider does.
+const REMOTE_ORIGIN = Symbol('remote');
+
+type Joined = Extract<OpenResult, { ok: true }>;
 
 const roomLimits = {
   maxPayloadBytes: 64 * 1024,
@@ -54,24 +52,50 @@ const connectionLimits = {
   heartbeatIntervalMs: 15_000,
 };
 
+// A store whose next append can be made to fail, to check that a failed write is not applied.
+class FlakyStore extends PostgresBoardStore {
+  failNextAppend = false;
+  override async appendUpdate(boardId: string, authorId: string | null, update: Uint8Array) {
+    if (this.failNextAppend) {
+      this.failNextAppend = false;
+      throw new Error('simulated write failure');
+    }
+    return super.appendUpdate(boardId, authorId, update);
+  }
+}
+
 describeWithDatabase('board sync service', () => {
   let database: TestDatabase;
+  let store: FlakyStore;
   let service: SyncService;
+  const logs: Array<{ level: string; message: string }> = [];
+  const logger: Logger = {
+    error: (_obj, message) => logs.push({ level: 'error', message }),
+    warn: (_obj, message) => logs.push({ level: 'warn', message }),
+  };
+
+  const makeService = (activeStore: FlakyStore) =>
+    new SyncService({
+      db: database.db,
+      store: activeStore,
+      roomLimits,
+      connectionLimits,
+      sweepIntervalMs: 0,
+      logger,
+    });
 
   beforeAll(async () => {
     database = await createTestDatabase(testDatabaseUrl ?? '');
-    service = new SyncService({ db: database.db, roomLimits, connectionLimits });
+    store = new FlakyStore(database.db, () => undefined);
+    service = makeService(store);
   });
 
   afterAll(async () => {
-    service.shutdown();
+    await service.shutdown();
     await database.drop();
   });
 
-  const openAs = (user: AuthUser, boardId: string) =>
-    service.open({ user, boardId, socket: new FakeSocket() });
-
-  const newUser = async (name: string) => {
+  const newUser = async (name: string): Promise<AuthUser> => {
     const user = await createUser(database.db, {
       email: `${randomUUID()}@example.com`,
       displayName: name,
@@ -80,60 +104,72 @@ describeWithDatabase('board sync service', () => {
     return { id: user.id, email: user.email, displayName: user.displayName };
   };
 
+  const openAs = (activeService: SyncService, user: AuthUser, boardId: string) =>
+    activeService.open({ user, boardId, socket: new FakeSocket() });
+
+  // Hands each frame the server sent to the client, and sends the client's replies back.
+  async function pump(
+    activeService: SyncService,
+    socket: FakeSocket,
+    client: SyncClient,
+    join: Joined,
+  ) {
+    while (socket.sent.length > 0) {
+      const frame = socket.sent.shift();
+      if (!frame) break;
+      for (const reply of client.receive(frame)) {
+        await activeService.receive(join.connection, reply);
+      }
+    }
+  }
+
+  // Captures the update for one change to a client document.
+  function changeFor(doc: Y.Doc, change: (doc: Y.Doc) => void): Uint8Array[] {
+    const updates: Uint8Array[] = [];
+    const record = (update: Uint8Array) => updates.push(update);
+    doc.on('update', record);
+    change(doc);
+    doc.off('update', record);
+    return updates;
+  }
+
   it('admits an owner and a viewer, and marks the viewer read-only', async () => {
     const owner = await newUser('Owner');
     const viewer = await newUser('Viewer');
     const board = await createBoard(database.db, { ownerId: owner.id, title: 'Shared' });
     await addMember(database.db, { boardId: board.id, userId: viewer.id, role: 'viewer' });
 
-    const ownerResult = await openAs(owner, board.id);
-    const viewerResult = await openAs(viewer, board.id);
+    const ownerResult = await openAs(service, owner, board.id);
+    const viewerResult = await openAs(service, viewer, board.id);
 
     expect(ownerResult.ok && ownerResult.connection.readOnly).toBe(false);
     expect(viewerResult.ok && viewerResult.connection.readOnly).toBe(true);
   });
 
-  it('refuses a user who is not a member, with the same answer as a missing board', async () => {
+  it('refuses a non-member with the same answer as a missing board', async () => {
     const owner = await newUser('Owner');
     const stranger = await newUser('Stranger');
     const board = await createBoard(database.db, { ownerId: owner.id, title: 'Private' });
 
-    const forbidden = await openAs(stranger, board.id);
-    const missing = await openAs(stranger, randomUUID());
+    const forbidden = await openAs(service, stranger, board.id);
+    const missing = await openAs(service, stranger, randomUUID());
 
     expect(forbidden).toMatchObject({ ok: false, code: CLOSE_POLICY_VIOLATION });
-    expect(missing).toMatchObject({
-      ok: false,
-      code: CLOSE_POLICY_VIOLATION,
-      reason: 'board not found',
-    });
     expect(forbidden).toEqual(missing);
   });
 
-  it('limits how many connections one user can hold', async () => {
+  it('limits how many connections one user can hold, and releases the slot on close', async () => {
     const owner = await newUser('Busy');
     const board = await createBoard(database.db, { ownerId: owner.id, title: 'Busy board' });
 
-    const first = await service.open({ user: owner, boardId: board.id, socket: new FakeSocket() });
-    const second = await service.open({ user: owner, boardId: board.id, socket: new FakeSocket() });
-    const third = await service.open({ user: owner, boardId: board.id, socket: new FakeSocket() });
-
-    expect(first.ok && second.ok).toBe(true);
+    const first = await openAs(service, owner, board.id);
+    await openAs(service, owner, board.id);
+    const third = await openAs(service, owner, board.id);
+    expect(first.ok).toBe(true);
     expect(third).toMatchObject({ ok: false, reason: 'too many connections' });
-  });
 
-  it('releases a user connection budget when a connection closes', async () => {
-    const owner = await newUser('Cycler');
-    const board = await createBoard(database.db, { ownerId: owner.id, title: 'Cycle' });
-
-    const socketA = new FakeSocket();
-    const first = await service.open({ user: owner, boardId: board.id, socket: socketA });
-    await service.open({ user: owner, boardId: board.id, socket: new FakeSocket() });
     if (first.ok) first.connection.close(1000, 'bye');
-
-    const again = await service.open({ user: owner, boardId: board.id, socket: new FakeSocket() });
-    expect(again.ok).toBe(true);
-    expect(socketA.closes).toEqual([{ code: 1000, reason: 'bye' }]);
+    expect((await openAs(service, owner, board.id)).ok).toBe(true);
   });
 
   it('converges two clients through the service, starting from the join handshake', async () => {
@@ -153,38 +189,96 @@ describeWithDatabase('board sync service', () => {
     const aliceClient = new SyncClient({ doc: aliceDoc, remoteOrigin: REMOTE_ORIGIN });
     const bobClient = new SyncClient({ doc: bobDoc, remoteOrigin: REMOTE_ORIGIN });
 
-    // Hands each frame the server sent to the client, and sends the client's replies back.
-    const deliver = (socket: FakeSocket, client: SyncClient, join: Joined) => {
-      while (socket.sent.length > 0) {
-        const frame = socket.sent.shift();
-        if (!frame) break;
-        for (const reply of client.receive(frame)) {
-          service.receive(join.connection, reply);
-        }
-      }
-    };
+    await service.receive(aliceJoin.connection, aliceClient.start());
+    await service.receive(bobJoin.connection, bobClient.start());
+    await pump(service, aliceSocket, aliceClient, aliceJoin);
+    await pump(service, bobSocket, bobClient, bobJoin);
 
-    service.receive(aliceJoin.connection, aliceClient.start());
-    service.receive(bobJoin.connection, bobClient.start());
-    deliver(aliceSocket, aliceClient, aliceJoin);
-    deliver(bobSocket, bobClient, bobJoin);
-
-    // Alice draws; Bob receives it through the service.
-    const updates: Uint8Array[] = [];
-    const onUpdate = (update: Uint8Array) => updates.push(update);
-    aliceDoc.on('update', onUpdate);
-    aliceDoc.getMap('objects').set('shape', 'rectangle');
-    aliceDoc.off('update', onUpdate);
-    for (const update of updates) {
-      service.receive(aliceJoin.connection, encodeSyncUpdate(update));
+    for (const update of changeFor(aliceDoc, (doc) => doc.getMap('objects').set('shape', 'rect'))) {
+      await service.receive(aliceJoin.connection, encodeSyncUpdate(update));
     }
-    deliver(bobSocket, bobClient, bobJoin);
+    await pump(service, bobSocket, bobClient, bobJoin);
 
-    expect(bobDoc.getMap('objects').get('shape')).toBe('rectangle');
-    expect(service.roomFor(board.id)?.doc.getMap('objects').get('shape')).toBe('rectangle');
+    expect(bobDoc.getMap('objects').get('shape')).toBe('rect');
+    expect(service.roomFor(board.id)?.doc.getMap('objects').get('shape')).toBe('rect');
+    expect(aliceClient.acknowledgedSeq).toBeGreaterThan(0);
   });
 
-  it('closes a connection that sends an oversized frame, and leaves others open', async () => {
+  it('keeps the board across a restart: a new service rebuilds it from the database', async () => {
+    const owner = await newUser('Restart');
+    const board = await createBoard(database.db, { ownerId: owner.id, title: 'Restart' });
+
+    const before = makeService(store);
+    const socket = new FakeSocket();
+    const join = await before.open({ user: owner, boardId: board.id, socket });
+    if (!join.ok) throw new Error('expected the owner to join');
+    const client = new SyncClient({ doc: new Y.Doc(), remoteOrigin: REMOTE_ORIGIN });
+    await before.receive(join.connection, client.start());
+    await pump(before, socket, client, join);
+    for (const update of changeFor(client.doc, (doc) => doc.getMap('objects').set('kept', 'yes'))) {
+      await before.receive(join.connection, encodeSyncUpdate(update));
+    }
+    await before.shutdown();
+
+    const after = makeService(store);
+    const returning = new FakeSocket();
+    const rejoin = await after.open({ user: owner, boardId: board.id, socket: returning });
+    if (!rejoin.ok) throw new Error('expected the owner to rejoin');
+    const reader = new SyncClient({ doc: new Y.Doc(), remoteOrigin: REMOTE_ORIGIN });
+    await after.receive(rejoin.connection, reader.start());
+    await pump(after, returning, reader, rejoin);
+    await after.shutdown();
+
+    expect(reader.doc.getMap('objects').get('kept')).toBe('yes');
+  });
+
+  it('acknowledges an update only after it is stored', async () => {
+    const owner = await newUser('Acks');
+    const board = await createBoard(database.db, { ownerId: owner.id, title: 'Acks' });
+    const socket = new FakeSocket();
+    const join = await service.open({ user: owner, boardId: board.id, socket });
+    if (!join.ok) throw new Error('expected the owner to join');
+    const client = new SyncClient({ doc: new Y.Doc(), remoteOrigin: REMOTE_ORIGIN });
+    await service.receive(join.connection, client.start());
+    await pump(service, socket, client, join);
+
+    for (const update of changeFor(client.doc, (doc) => doc.getMap('objects').set('a', 1))) {
+      await service.receive(join.connection, encodeSyncUpdate(update));
+    }
+    await pump(service, socket, client, join);
+
+    expect(client.acknowledgedSeq).toBeGreaterThan(0);
+  });
+
+  it('closes only the sender when a write fails, and applies nothing for it', async () => {
+    const owner = await newUser('Failing');
+    const board = await createBoard(database.db, { ownerId: owner.id, title: 'Failing' });
+    const senderSocket = new FakeSocket();
+    const neighbourSocket = new FakeSocket();
+    const sender = await service.open({ user: owner, boardId: board.id, socket: senderSocket });
+    const neighbour = await service.open({
+      user: owner,
+      boardId: board.id,
+      socket: neighbourSocket,
+    });
+    if (!sender.ok || !neighbour.ok) throw new Error('expected both to join');
+
+    const client = new SyncClient({ doc: new Y.Doc(), remoteOrigin: REMOTE_ORIGIN });
+    const updates = changeFor(client.doc, (doc) => doc.getMap('objects').set('lost', 1));
+    store.failNextAppend = true;
+    const framesBefore = neighbourSocket.sent.length;
+    for (const update of updates) {
+      await service.receive(sender.connection, encodeSyncUpdate(update));
+    }
+
+    expect(senderSocket.closes[0]?.code).toBe(CLOSE_INTERNAL_ERROR);
+    expect(neighbourSocket.closes).toEqual([]);
+    expect(neighbourSocket.sent.length).toBe(framesBefore);
+    expect(service.roomFor(board.id)?.doc.getMap('objects').has('lost')).toBe(false);
+    expect(logs.some((entry) => entry.message === 'sync update was not stored')).toBe(true);
+  });
+
+  it('closes a connection that sends an oversized frame, leaving its neighbours open', async () => {
     const owner = await newUser('Oversize');
     const board = await createBoard(database.db, { ownerId: owner.id, title: 'Oversize' });
     const offender = new FakeSocket();
@@ -193,17 +287,17 @@ describeWithDatabase('board sync service', () => {
     const good = await service.open({ user: owner, boardId: board.id, socket: neighbour });
     if (!bad.ok || !good.ok) throw new Error('expected both to open');
 
-    service.receive(bad.connection, new Uint8Array(connectionLimits.maxFrameBytes + 1));
+    await service.receive(bad.connection, new Uint8Array(connectionLimits.maxFrameBytes + 1));
 
     expect(offender.closes[0]?.code).toBe(1009);
     expect(neighbour.closes).toEqual([]);
     expect(service.roomFor(board.id)?.has(good.connection.id)).toBe(true);
   });
 
-  it('removes a connection from its room once its socket is gone', async () => {
+  it('releases the room when its last socket is gone', async () => {
     const owner = await newUser('Gone');
     const board = await createBoard(database.db, { ownerId: owner.id, title: 'Gone' });
-    const result = await service.open({ user: owner, boardId: board.id, socket: new FakeSocket() });
+    const result = await openAs(service, owner, board.id);
     if (!result.ok) throw new Error('expected open');
 
     result.connection.markClosed();

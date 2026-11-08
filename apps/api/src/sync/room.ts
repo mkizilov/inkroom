@@ -4,12 +4,14 @@ import {
   Encoder,
   ProtocolError,
   decodeClientMessage,
+  encodeAck,
   encodeAwareness,
   encodeSyncStep1,
   encodeSyncStep2,
   encodeSyncUpdate,
   type ClientMessage,
 } from '@inkroom/shared';
+import type { BoardStore } from '../persistence/store';
 
 // A connection as the room sees it. The transport supplies `send`, which returns false when the
 // socket can no longer take frames.
@@ -34,6 +36,20 @@ export const DEFAULT_ROOM_LIMITS: RoomLimits = {
   maxUpdateBytesPerSecond: 4 * 1024 * 1024,
 };
 
+export type RoomPersistence = Pick<BoardStore, 'appendUpdate' | 'compact'>;
+
+export interface RoomOptions {
+  boardId: string;
+  doc: Y.Doc;
+  store: RoomPersistence;
+  limits: RoomLimits;
+  // Start a compaction after this many updates have been stored by this room.
+  compactEvery: number;
+  now: () => number;
+  // Receives background work (compaction) so the owner can wait for it and report its failures.
+  track: (work: Promise<unknown>) => void;
+}
+
 interface Subscriber {
   connection: RoomConnection;
   // Latest awareness clock seen for each client id this connection announced. A removal must carry
@@ -43,26 +59,35 @@ interface Subscriber {
   windowBytes: number;
 }
 
-export type JoinResult = { ok: true } | { ok: false; reason: 'full' };
+export type JoinResult = { ok: true } | { ok: false; reason: 'full' | 'closed' };
 
-// The live state of one board. Every connection to the board shares this room. The Yjs document
-// is held in memory only, so it is lost when the last connection leaves; persistence comes later.
+// The live state of one board. Every connection to the board shares this room.
+//
+// Durability rule: a client update is validated, then stored, and only after the store confirms it
+// is applied to memory, broadcast to the other connections, and acknowledged to its sender. Memory
+// therefore never holds an update that the database lacks. Updates are handled one at a time in
+// arrival order, so the stored order matches the order the room applied them.
 export class Room {
   readonly boardId: string;
   readonly doc: Y.Doc;
   private readonly subscribers = new Map<string, Subscriber>();
-  private readonly limits: RoomLimits;
-  private readonly now: () => number;
+  private readonly options: RoomOptions;
+  private queue: Promise<unknown> = Promise.resolve();
+  private closed = false;
+  private appendsSinceCompaction = 0;
 
-  constructor(boardId: string, limits: RoomLimits, now: () => number = Date.now) {
-    this.boardId = boardId;
-    this.limits = limits;
-    this.now = now;
-    this.doc = new Y.Doc();
+  constructor(options: RoomOptions) {
+    this.options = options;
+    this.boardId = options.boardId;
+    this.doc = options.doc;
   }
 
   get size(): number {
     return this.subscribers.size;
+  }
+
+  get isClosed(): boolean {
+    return this.closed;
   }
 
   has(connectionId: string): boolean {
@@ -72,7 +97,10 @@ export class Room {
   // Adds a connection and sends the room's state vector. The client answers with the updates the
   // room lacks (step 2), and the room answers the client's state vector with what the client lacks.
   join(connection: RoomConnection): JoinResult {
-    if (this.subscribers.size >= this.limits.maxConnectionsPerRoom) {
+    if (this.closed) {
+      return { ok: false, reason: 'closed' };
+    }
+    if (this.subscribers.size >= this.options.limits.maxConnectionsPerRoom) {
       return { ok: false, reason: 'full' };
     }
     this.subscribers.set(connection.id, {
@@ -85,7 +113,7 @@ export class Room {
     return { ok: true };
   }
 
-  // Removes a connection and tells the others that its presence has gone.
+  // Removes a connection and announces that its presence has gone.
   leave(connectionId: string): void {
     const subscriber = this.subscribers.get(connectionId);
     if (!subscriber) {
@@ -101,68 +129,133 @@ export class Room {
     }
   }
 
-  // Handles one frame from a connection. A frame that is malformed, too large, or over the rate
-  // limit throws, and the transport then closes that connection.
-  receive(connectionId: string, frame: Uint8Array): void {
+  // Handles one frame from a connection. The frame is decoded now, and handled after every earlier
+  // frame has finished. A rejected promise means the frame was refused; the caller then closes the
+  // connection.
+  receive(connectionId: string, frame: Uint8Array): Promise<void> {
     const subscriber = this.subscribers.get(connectionId);
     if (!subscriber) {
-      throw new ProtocolError('connection is not in this room');
+      return Promise.reject(new ProtocolError('connection is not in this room'));
     }
-    const message = decodeClientMessage(frame, this.limits.maxPayloadBytes);
-    this.handle(subscriber, message);
+    let message: ClientMessage;
+    try {
+      message = decodeClientMessage(frame, this.options.limits.maxPayloadBytes);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return this.enqueue(() => this.handle(subscriber, message));
   }
 
-  private handle(subscriber: Subscriber, message: ClientMessage): void {
-    const from = subscriber.connection;
-    if (message.kind === 'awareness') {
-      for (const entry of readAwareness(message.update)) {
-        subscriber.awarenessClocks.set(entry.clientId, entry.clock);
+  // Applies an update that the store has already written, such as a restore, and tells the
+  // connections. Nothing is written again.
+  applyPersisted(update: Uint8Array): Promise<void> {
+    return this.enqueue(async () => {
+      if (this.closed) {
+        return;
       }
-      this.broadcast(from.id, encodeAwareness(message.update));
+      Y.applyUpdate(this.doc, update, 'restore');
+      this.broadcast('', encodeSyncUpdate(update));
+    });
+  }
+
+  // Ends the room. Its document is released; the stored log is unaffected, so a later room for the
+  // same board rebuilds the same state.
+  destroy(): void {
+    if (this.closed) {
+      return;
+    }
+    this.closed = true;
+    this.subscribers.clear();
+    if (this.appendsSinceCompaction > 0) {
+      this.appendsSinceCompaction = 0;
+      this.options.track(this.options.store.compact(this.boardId));
+    }
+    this.doc.destroy();
+  }
+
+  private enqueue(task: () => Promise<void>): Promise<void> {
+    const run = this.queue.then(task);
+    // A failed task must not stop the tasks queued after it.
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async handle(subscriber: Subscriber, message: ClientMessage): Promise<void> {
+    if (this.closed || !this.subscribers.has(subscriber.connection.id)) {
+      return;
+    }
+    const from = subscriber.connection;
+
+    switch (message.kind) {
+      case 'awareness':
+        for (const entry of readAwareness(message.update)) {
+          subscriber.awarenessClocks.set(entry.clientId, entry.clock);
+        }
+        this.broadcast(from.id, encodeAwareness(message.update));
+        return;
+      case 'ack':
+        throw new ProtocolError('clients may not send acknowledgements');
+      case 'sync':
+        break;
+    }
+
+    const sync = message.sync;
+    if (sync.kind === 'step1') {
+      // The client describes what it has. Send what it lacks, and ask for what the room lacks.
+      const missing = Y.encodeStateAsUpdate(this.doc, sync.stateVector);
+      from.send(encodeSyncStep2(missing));
+      from.send(encodeSyncStep1(Y.encodeStateVector(this.doc)));
+      return;
+    }
+    if (from.readOnly) {
+      // Viewers can read but not change the document. Their writes are discarded and the connection
+      // stays open, so a viewer's client does not reconnect in a loop.
+      return;
+    }
+    await this.commit(subscriber, sync.update);
+  }
+
+  // Both update frames and step-2 replies carry client changes (step 2 is how a reconnecting
+  // client sends its offline edits), so both are stored and acknowledged the same way.
+  private async commit(subscriber: Subscriber, update: Uint8Array): Promise<void> {
+    const connection = subscriber.connection;
+    const decoded = decodeOrRefuse(update);
+    this.chargeRate(subscriber, update.byteLength);
+    if (decoded.structs.length === 0 && decoded.ds.clients.size === 0) {
+      // Nothing new in this update, so there is nothing to store.
       return;
     }
 
-    switch (message.sync.kind) {
-      case 'step1': {
-        // The client describes what it has. Send what it lacks, and ask for what the room lacks.
-        const missing = Y.encodeStateAsUpdate(this.doc, message.sync.stateVector);
-        from.send(encodeSyncStep2(missing));
-        from.send(encodeSyncStep1(Y.encodeStateVector(this.doc)));
-        return;
-      }
-      case 'step2':
-      case 'update':
-        if (from.readOnly) {
-          // Viewers can read but not change the document. Their writes are discarded, and the
-          // connection stays open, so a viewer's client does not reconnect in a loop.
-          return;
-        }
-        this.applyFromClient(subscriber, message.sync.update);
-        return;
+    // If this rejects, nothing has been applied or sent, and the client still holds the update. It
+    // is sent again on its next connection, through the state-vector handshake.
+    const seq = await this.options.store.appendUpdate(this.boardId, connection.userId, update);
+    if (this.closed) {
+      // The room ended while the write was in flight. The update is stored, so the next room for
+      // this board will include it.
+      return;
     }
-  }
 
-  private applyFromClient(subscriber: Subscriber, update: Uint8Array): void {
-    this.chargeRate(subscriber, update.byteLength);
-    try {
-      Y.applyUpdate(this.doc, update, subscriber.connection.id);
-    } catch {
-      // A structurally invalid update is the client's fault, and it must not reach the others.
-      throw new ProtocolError('update could not be applied');
+    Y.applyUpdate(this.doc, update, connection.id);
+    this.broadcast(connection.id, encodeSyncUpdate(update));
+    connection.send(encodeAck(seq));
+
+    this.appendsSinceCompaction += 1;
+    if (this.appendsSinceCompaction >= this.options.compactEvery) {
+      this.appendsSinceCompaction = 0;
+      this.options.track(this.options.store.compact(this.boardId));
     }
-    this.broadcast(subscriber.connection.id, encodeSyncUpdate(update));
   }
 
   // Charges bytes against this connection's one-second window. Once the budget is spent, its
   // updates are refused until the window rolls over.
   private chargeRate(subscriber: Subscriber, bytes: number): void {
-    const now = this.now();
+    const now = this.options.now();
     if (now - subscriber.windowStart >= 1000) {
       subscriber.windowStart = now;
       subscriber.windowBytes = 0;
     }
     subscriber.windowBytes += bytes;
-    if (subscriber.windowBytes > this.limits.maxUpdateBytesPerSecond) {
+    if (subscriber.windowBytes > this.options.limits.maxUpdateBytesPerSecond) {
       throw new ProtocolError('update rate limit exceeded');
     }
   }
@@ -180,10 +273,15 @@ export class Room {
       this.leave(id);
     }
   }
+}
 
-  destroy(): void {
-    this.subscribers.clear();
-    this.doc.destroy();
+// Decodes an update's structure before anything is stored. A structurally invalid update is the
+// client's fault, and it must not reach the store or the other clients.
+function decodeOrRefuse(update: Uint8Array): ReturnType<typeof Y.decodeUpdate> {
+  try {
+    return Y.decodeUpdate(update);
+  } catch {
+    throw new ProtocolError('update is malformed');
   }
 }
 

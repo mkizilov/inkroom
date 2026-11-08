@@ -2,8 +2,8 @@
 
 Every board has a live sync room. Browsers open a WebSocket to the board's endpoint and exchange
 Yjs updates, so an edit in one browser appears in every other browser open on the same board,
-without a reload. Persistence is not part of this stage: a room's document lives in memory and is
-discarded when the last connection leaves.
+without a reload. Updates are stored in PostgreSQL before they are applied or acknowledged. See
+[persistence.md](persistence.md) for the storage model, recovery and revision history.
 
 ## Endpoint
 
@@ -123,8 +123,10 @@ on a new connection is the client's state vector.
 - **Single process.** Rooms and connection counts live in one process's memory. Several API
   instances would each hold a separate room for the same board, so horizontal scaling needs a
   shared broadcast layer (for example Redis or Postgres notifications).
-- **No persistence.** A board's state survives only while someone is connected. Persistence and
-  snapshot compaction are the next stage.
+- **Acknowledgements are not yet used by the browser.** The server sends `MESSAGE_ACK` after each
+  update is stored, and `SyncClient.acknowledgedSeq` records it, but the UI does not show saved
+  state, and nothing else depends on it. Reconnection does not rely on acknowledgements: the
+  state-vector handshake covers unacknowledged changes.
 - **Awareness is relayed as received.** The server reads client ids and clocks to track presence,
   but does not validate the state JSON. Malformed presence reaches peers unchanged.
 - **The rate limit is per connection, not per user.** A user can open up to the per-user cap (20)
