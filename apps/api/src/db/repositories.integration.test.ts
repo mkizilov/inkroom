@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createBoard, deleteBoard, getBoardRole, listBoardsForUser } from './repositories/boards';
+import {
+  createBoard,
+  deleteBoard,
+  getBoardRole,
+  listBoardsPageForUser,
+} from './repositories/boards';
 import {
   createSession,
   findSessionWithUserByTokenHash,
@@ -93,7 +98,9 @@ describeWithDatabase('database access modules', () => {
     const owner = await newUser('Owner');
 
     await expect(createBoard(database.db, { ownerId: owner.id, title: '   ' })).rejects.toThrow();
-    expect(await listBoardsForUser(database.db, owner.id)).toHaveLength(0);
+    expect((await listBoardsPageForUser(database.db, owner.id, { limit: 20 })).items).toHaveLength(
+      0,
+    );
   });
 
   it('lists only the boards a user is a member of, with their role', async () => {
@@ -104,7 +111,7 @@ describeWithDatabase('database access modules', () => {
     await createBoard(database.db, { ownerId: outsider.id, title: 'Private' });
     await addMember(database.db, { boardId: board.id, userId: editor.id, role: 'editor' });
 
-    const listed = await listBoardsForUser(database.db, editor.id);
+    const { items: listed } = await listBoardsPageForUser(database.db, editor.id, { limit: 20 });
 
     expect(listed.map((row) => ({ id: row.id, role: row.role }))).toEqual([
       { id: board.id, role: 'editor' },
@@ -189,6 +196,8 @@ describeWithDatabase('database access modules', () => {
 
     expect(await getBoardRole(database.db, board.id, owner.id)).toBeNull();
     expect(await listDocumentUpdates(database.db, board.id)).toHaveLength(0);
-    expect(await listBoardsForUser(database.db, owner.id)).toHaveLength(0);
+    expect((await listBoardsPageForUser(database.db, owner.id, { limit: 20 })).items).toHaveLength(
+      0,
+    );
   });
 });

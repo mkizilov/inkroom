@@ -1,68 +1,30 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { loginRequestSchema, registerRequestSchema, type AuthUser } from '@inkroom/shared';
+import { loginRequestSchema, registerRequestSchema } from '@inkroom/shared';
 import type { DbExecutor } from '../db/client';
 import { sqlStateOf, UNIQUE_VIOLATION } from '../db/errors';
 import { AppError } from '../http/errors';
 import { parseBody } from '../http/validation';
+import { sessionClearCookie, sessionSetCookie } from './cookies';
+import { currentUserOf, requestSessionToken } from './middleware';
 import { type FailureLimiter } from './rate-limit';
-import { readSessionToken, sessionClearCookie, sessionSetCookie } from './cookies';
-import { SESSION_TOKEN_PATTERN } from './session-token';
 import {
   authenticateUser,
   issueSession,
   registerUser,
-  resolveSession,
   revokeSession,
   toAuthUser,
 } from './service';
 
-declare module 'fastify' {
-  interface FastifyRequest {
-    currentUser: AuthUser | null;
-  }
-}
-
 export interface AuthRouteOptions {
   db: DbExecutor;
   cookieSecure: boolean;
+  requireUser: (request: FastifyRequest) => Promise<void>;
   limits: { byEmail: FailureLimiter; byIp: FailureLimiter };
 }
 
 export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptions): void {
-  const { db, cookieSecure, limits } = options;
+  const { db, cookieSecure, requireUser, limits } = options;
   app.decorateRequest('currentUser', null);
-
-  const sessionToken = (request: FastifyRequest): string | undefined => {
-    const token = readSessionToken(request.headers.cookie, cookieSecure);
-    return token && SESSION_TOKEN_PATTERN.test(token) ? token : undefined;
-  };
-
-  // Authentication middleware: attaches request.currentUser or rejects with a specific 401 code.
-  const requireUser = async (request: FastifyRequest): Promise<void> => {
-    const token = sessionToken(request);
-    if (!token) {
-      throw new AppError(401, 'unauthenticated', 'Sign in to continue.');
-    }
-    const session = await resolveSession(db, token);
-    switch (session.status) {
-      case 'active':
-        request.currentUser = session.user;
-        return;
-      case 'expired':
-        throw new AppError(401, 'session_expired', 'Your session has expired. Sign in again.');
-      case 'revoked':
-        throw new AppError(401, 'session_revoked', 'You have been signed out. Sign in again.');
-      case 'invalid':
-        throw new AppError(401, 'unauthenticated', 'Sign in to continue.');
-    }
-  };
-
-  const currentUserOf = (request: FastifyRequest): AuthUser => {
-    if (!request.currentUser) {
-      throw new AppError(401, 'unauthenticated', 'Sign in to continue.');
-    }
-    return request.currentUser;
-  };
 
   const setSessionCookie = (token: string) => sessionSetCookie(token, cookieSecure);
 
@@ -109,7 +71,7 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
   });
 
   app.post('/api/auth/logout', async (request, reply) => {
-    const token = sessionToken(request);
+    const token = requestSessionToken(request, cookieSecure);
     if (token) {
       await revokeSession(db, token);
     }

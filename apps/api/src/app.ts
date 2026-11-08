@@ -1,7 +1,9 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { type HealthResponse } from '@inkroom/shared';
+import { createRequireUser } from './auth/middleware';
 import { createFailureLimiter } from './auth/rate-limit';
 import { registerAuthRoutes } from './auth/routes';
+import { registerBoardRoutes } from './boards/routes';
 import type { Database } from './db/client';
 import { registerErrorHandlers } from './http/errors';
 import { requireTrustedOrigin } from './http/origin';
@@ -60,9 +62,12 @@ export function buildApp({
     return reply.code(healthy ? 200 : 503).send(body);
   });
 
+  const requireUser = createRequireUser(database.db, cookieSecure);
+
   registerAuthRoutes(app, {
     db: database.db,
     cookieSecure,
+    requireUser,
     limits: {
       byEmail: createFailureLimiter({
         maxFailures: limits.maxFailuresPerEmail,
@@ -74,6 +79,8 @@ export function buildApp({
       }),
     },
   });
+
+  registerBoardRoutes(app, { db: database.db, requireUser });
 
   return app;
 }

@@ -16,6 +16,8 @@ const messages: Record<string, string> = {
   network_error: 'Could not reach the server. Check your connection and try again.',
   session_expired: 'Your session has expired. Sign in again.',
   session_revoked: 'You have been signed out. Sign in again.',
+  board_not_found: 'This board does not exist or you do not have access to it.',
+  forbidden: 'Your role on this board does not allow this action.',
 };
 
 export function describeError(error: unknown): string {

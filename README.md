@@ -110,6 +110,8 @@ Run from the repository root.
 - **Authentication**: email and password accounts (Argon2id), server-side sessions stored as token
   hashes, HTTP-only cookies, login rate limiting and an Origin check on writes. See
   [docs/authentication.md](docs/authentication.md).
+- **Boards**: authenticated create, list (keyset-paginated), read, rename and delete, with roles
+  enforced per action and a dashboard in the web app. See [docs/boards.md](docs/boards.md).
 - **Web (`apps/web`)**: React 19 with Vite. The app talks to the API only through relative `/api`
   URLs, which the dev server proxies, so no CORS configuration is needed in development.
 
@@ -147,11 +149,12 @@ Node 22. The `pnpm-lock.yaml` file must be committed for the frozen install to s
 
 - Implemented: monorepo layout, strict TypeScript, ESLint, Prettier, Vitest, health endpoint,
   database connectivity check, Docker Compose PostgreSQL, CI workflow, database schema with
-  versioned migrations, repository modules, seed data, integration tests, and authentication
+  versioned migrations, repository modules, seed data, integration tests, authentication
   (register, login, logout, current user, session expiry and revocation, rate limiting, CSRF
-  origin checks) with login and registration pages.
-- Not implemented: whiteboard interface, real-time collaboration, OAuth or social sign-in, Yjs
-  update compaction, email verification, password reset, production Docker images.
+  origin checks) with login and registration pages, and board management with a dashboard.
+- Not implemented: whiteboard canvas, membership management, real-time collaboration, OAuth or
+  social sign-in, Yjs update compaction, email verification, password reset, production Docker
+  images.
 
 ## Contributing
 

@@ -1,7 +1,8 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router';
 import { AuthProvider } from './auth/AuthContext';
 import { RequireAuth } from './auth/RequireAuth';
-import { HomePage } from './pages/HomePage';
+import { BoardPage } from './pages/BoardPage';
+import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
 
@@ -12,7 +13,15 @@ export function AppRoutes() {
         path="/"
         element={
           <RequireAuth>
-            <HomePage />
+            <DashboardPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/boards/:boardId"
+        element={
+          <RequireAuth>
+            <BoardPage />
           </RequireAuth>
         }
       />
