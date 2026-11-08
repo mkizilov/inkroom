@@ -2,6 +2,7 @@
   "name": "@inkroom/web",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -20,7 +21,8 @@
     "yjs": "^13.6.20",
     "react-dom": "^19.0.0",
     "react-konva": "^19.0.0",
-    "react-router": "^7.1.0"
+    "react-router": "^7.1.0",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
