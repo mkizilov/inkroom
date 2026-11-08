@@ -1,0 +1,22 @@
+name: inkroom
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-inkroom}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-inkroom}
+      POSTGRES_DB: ${POSTGRES_DB:-inkroom}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-21432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-inkroom} -d $${POSTGRES_DB:-inkroom}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:

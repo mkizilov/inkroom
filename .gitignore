@@ -4,3 +4,10 @@
 .venv/
 _opam/
 .DS_Store
+node_modules/
+dist/
+coverage/
+*.log
+.env
+.env.local
+.vite/

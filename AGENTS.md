@@ -15,3 +15,41 @@
 - End each turn with a short summary of changes, checks actually run, remaining limitations, and commit hash. The orchestrator will provide the next prompt only after this turn ends.
 
 Extend this file with the project's language-specific architecture and verification commands while retaining these boundaries.
+
+## Project architecture and conventions
+
+- Monorepo managed by pnpm workspaces: `apps/web` (React, Vite), `apps/api` (Fastify, Node 22),
+  `packages/shared` (zod schemas and inferred types used by both apps). Consumers import the shared
+  package from its TypeScript source; do not add a build step for it without a reason.
+- API layering: `config.ts` parses the environment, `db/` holds the pg pool and Drizzle client,
+  `app.ts` builds the Fastify instance from injected dependencies, `server.ts` is the only
+  process entry point. Routes must be testable with `app.inject` and must not import `server.ts`.
+- Naming: files and modules are kebab- or lower-case (`app.ts`, `config.ts`); React components are
+  PascalCase in `.tsx`; tests sit beside the source as `*.test.ts(x)`; API routes live under `/api`.
+- Database: PostgreSQL through Drizzle ORM. Table definitions go in `apps/api/src/db/schema.ts`
+  (currently empty). Generate migrations with `pnpm db:generate` and commit them.
+- TypeScript is strict in every package (`tsconfig.base.json`). Do not weaken compiler options or
+  add `any`/`@ts-ignore` to get code to compile.
+- Environment variables are documented in `.env.example` and the README. Add new variables to both
+  and validate them in `apps/api/src/config.ts`.
+
+## Verification
+
+Run these before reporting a task as complete:
+
+- `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`. `pnpm check` runs all four.
+- `pnpm build` when you change build inputs, dependencies, or entry points.
+- When touching the API runtime or the web app, start them with `pnpm dev` and check
+  `http://127.0.0.1:21080/api/health` and `http://127.0.0.1:21173`, then stop the processes.
+- Use loopback ports 21000–21099 for any server you start. Keep at most two build or test workers.
+
+## Working rules for coding agents
+
+- Keep changes scoped to the requested task. Do not implement features that were not asked for.
+- Write tests for new behavior. Prefer behavior-level tests over tests of implementation details.
+- Follow existing patterns before introducing new abstractions or dependencies. Justify any new
+  dependency in the final report.
+- Preserve user files and unrelated changes. Do not reformat or reorganize files outside the task.
+- Clean up temporary files, scratch scripts, logs, and background processes you created.
+- Report changed files, the exact commands run with their results, and remaining issues.
+- Stop after completing the current task. Do not start the next numbered prompt.
