@@ -20,7 +20,9 @@
     "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test",
     "db:up": "docker compose up -d --wait postgres",
     "db:down": "docker compose down",
-    "db:generate": "pnpm --filter @inkroom/api run db:generate"
+    "db:generate": "pnpm --filter @inkroom/api run db:generate",
+    "db:migrate": "pnpm --filter @inkroom/api run db:migrate",
+    "db:seed": "pnpm --filter @inkroom/api run db:seed"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

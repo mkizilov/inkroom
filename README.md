@@ -89,6 +89,8 @@ Run from the repository root.
 | `pnpm db:up`          | Start PostgreSQL with Docker Compose and wait for health         |
 | `pnpm db:down`        | Stop the Compose services                                        |
 | `pnpm db:generate`    | Generate Drizzle migrations from `apps/api/src/db/schema.ts`     |
+| `pnpm db:migrate`     | Apply pending database migrations                                |
+| `pnpm db:seed`        | Insert demo users, a board and an update (skipped if present)    |
 
 ## Architecture
 
@@ -99,8 +101,10 @@ Run from the repository root.
   as a parameter, which keeps routes testable with `app.inject`. `loadConfig` validates the
   environment. `createDatabase` wraps a `pg` pool in a Drizzle client. `server.ts` wires these
   together and closes the pool on `SIGINT`/`SIGTERM`.
-- **Database**: PostgreSQL 16 through Docker Compose locally. Drizzle schema lives in
-  `apps/api/src/db/schema.ts`. It currently defines no tables, so `db:generate` has nothing to emit.
+- **Database**: PostgreSQL 16 through Docker Compose locally. The Drizzle schema lives in
+  `apps/api/src/db/schema.ts`, with versioned migrations in `apps/api/drizzle/`. Repository modules
+  in `apps/api/src/db/repositories/` are the only code that queries tables directly. See
+  [docs/database.md](docs/database.md) for the structure, deletion policies and migration workflow.
 - **Web (`apps/web`)**: React 19 with Vite. The app talks to the API only through relative `/api`
   URLs, which the dev server proxies, so no CORS configuration is needed in development.
 
@@ -113,11 +117,12 @@ pnpm --filter @inkroom/api test # one package
 
 - `packages/shared`: schema validation tests.
 - `apps/api`: configuration tests and route tests that run the Fastify app in-process, without a
-  database (the database dependency is stubbed).
+  database (the database dependency is stubbed). Database integration tests run only when
+  `TEST_DATABASE_URL` is set; CI sets it.
 - `apps/web`: component tests with Vitest and Testing Library in a jsdom environment.
 
-Tests do not require the Docker database. Database-backed integration tests are not written yet;
-when they are added, they should use the Compose database on port 21432.
+Database integration tests use the Compose database on port 21432 (`pnpm db:up` first). Each run
+uses a fresh schema and drops it afterward.
 
 ## Continuous integration
 
@@ -136,9 +141,10 @@ Node 22. The `pnpm-lock.yaml` file must be committed for the frozen install to s
 ## Project status and limitations
 
 - Implemented: monorepo layout, strict TypeScript, ESLint, Prettier, Vitest, health endpoint,
-  database connectivity check, Docker Compose PostgreSQL, CI workflow.
-- Not implemented: whiteboard domain model, boards and sessions, real-time collaboration,
-  authentication, database migrations, production Docker images.
+  database connectivity check, Docker Compose PostgreSQL, CI workflow, database schema with
+  versioned migrations, repository modules, seed data and integration tests.
+- Not implemented: whiteboard interface, real-time collaboration, authentication, Yjs update
+  compaction, production Docker images.
 
 ## Contributing
 
