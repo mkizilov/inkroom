@@ -96,9 +96,7 @@ describe('Yjs representation of objects', () => {
       uuid(1),
       uuid(2),
     ]);
-    expect([uuid(3), uuid(1), uuid(2)].map((id) => objects.get(id)?.get('z'))).toEqual([
-      0, 1, 2,
-    ]);
+    expect([uuid(3), uuid(1), uuid(2)].map((id) => objects.get(id)?.get('z'))).toEqual([0, 1, 2]);
     expect(consistencyProblems(objects)).toEqual([]);
   });
 

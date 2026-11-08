@@ -129,11 +129,7 @@ function removeObjects(objects: CanvasObject[], ids: string[]): CanvasObject[] {
   return objects.filter((object) => !targets.has(object.id));
 }
 
-function updateObject(
-  objects: CanvasObject[],
-  id: string,
-  changes: ObjectChanges,
-): CanvasObject[] {
+function updateObject(objects: CanvasObject[], id: string, changes: ObjectChanges): CanvasObject[] {
   const index = objects.findIndex((object) => object.id === id);
   const target = objects[index];
   if (!target) {

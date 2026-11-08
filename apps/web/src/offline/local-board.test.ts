@@ -22,10 +22,9 @@ function rectangle(n: number): CanvasObject {
 }
 
 function insertRectangle(document: CanvasDocument, n: number): void {
-  document.apply(
-    [{ type: 'insert', index: document.snapshot().length, objects: [rectangle(n)] }],
-    { boundary: true },
-  );
+  document.apply([{ type: 'insert', index: document.snapshot().length, objects: [rectangle(n)] }], {
+    boundary: true,
+  });
 }
 
 function localBoard(
@@ -44,7 +43,10 @@ function localBoard(
 }
 
 function idsOf(document: CanvasDocument): string[] {
-  return document.snapshot().map((object) => object.id).sort();
+  return document
+    .snapshot()
+    .map((object) => object.id)
+    .sort();
 }
 
 class FailingStore extends MemoryLocalStore {

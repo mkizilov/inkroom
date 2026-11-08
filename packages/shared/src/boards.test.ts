@@ -9,9 +9,7 @@ import {
 describe('board title validation', () => {
   it('trims titles and rejects blank or overlong ones', () => {
     expect(boardTitleSchema.parse('  Sprint 4  ')).toBe('Sprint 4');
-    expect(boardTitleSchema.safeParse('   ').error?.issues[0]?.message).toBe(
-      'Enter a board name.',
-    );
+    expect(boardTitleSchema.safeParse('   ').error?.issues[0]?.message).toBe('Enter a board name.');
     expect(boardTitleSchema.safeParse('x'.repeat(201)).success).toBe(false);
     expect(boardTitleSchema.safeParse('x'.repeat(200)).success).toBe(true);
   });

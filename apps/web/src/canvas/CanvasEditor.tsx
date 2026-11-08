@@ -21,7 +21,6 @@ import {
   pinchSample,
   pinchViewport,
   screenToWorld,
-  wheelViewport,
   worldToScreen,
   type PinchSample,
   type PinchStart,
@@ -231,9 +230,13 @@ export function CanvasEditor({
     if (!userId || !userName) {
       return;
     }
-    const controller = new PresenceController(awareness, { id: userId, name: userName }, {
-      timers: browserTimers,
-    });
+    const controller = new PresenceController(
+      awareness,
+      { id: userId, name: userName },
+      {
+        timers: browserTimers,
+      },
+    );
     presenceRef.current = controller;
     controller.start();
     const stopMaintenance = maintainAwareness(awareness, { timers: browserTimers });
@@ -347,6 +350,11 @@ export function CanvasEditor({
   // Pointer handling tracks every active pointer so two fingers can pinch and pan. The reducer
   // only ever sees a single pointer's gesture, plus viewport updates from pinching.
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    // The press must not move focus. An open text box would lose focus here and close before anyone
+    // typed into it.
+    if (event.button === 0) {
+      event.preventDefault();
+    }
     const element = event.currentTarget;
     const screen = pointIn(element, event.clientX, event.clientY);
     const pointers = pointersRef.current;
@@ -373,6 +381,9 @@ export function CanvasEditor({
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const pointers = pointersRef.current;
     if (!pointers.has(event.pointerId)) {
+      // A pointer that is not pressed still moves the cursor that other people see.
+      const hover = pointIn(event.currentTarget, event.clientX, event.clientY);
+      presenceRef.current?.setCursor(screenToWorld(hover, state.viewport));
       return;
     }
     const screen = pointIn(event.currentTarget, event.clientX, event.clientY);

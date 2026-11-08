@@ -18,8 +18,7 @@ export interface CursorPlacement {
 // which way to pan to find the participant. This is how clients looking at different regions of the
 // board still see each other.
 export function placeCursor(point: Point, size: ScreenSize, margin = 16): CursorPlacement {
-  const onScreen =
-    point.x >= 0 && point.y >= 0 && point.x <= size.width && point.y <= size.height;
+  const onScreen = point.x >= 0 && point.y >= 0 && point.x <= size.width && point.y <= size.height;
   if (onScreen) {
     return { x: point.x, y: point.y, onScreen: true };
   }

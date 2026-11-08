@@ -125,13 +125,17 @@ describe('InkRoom web app', () => {
 
     it('shows a loading state while signing in, then the dashboard', async () => {
       let finishLogin: (response: Response) => void = () => {};
+      let signedInNow = false;
       mockApi({
-        'GET /api/auth/me': unauthenticated,
+        ...signedIn(),
+        'GET /api/auth/me': () => (signedInNow ? json({ user }) : unauthenticated()),
         'POST /api/auth/login': () =>
           new Promise<Response>((resolve) => {
-            finishLogin = resolve;
+            finishLogin = (response) => {
+              signedInNow = true;
+              resolve(response);
+            };
           }),
-        ...signedIn(),
       });
       renderAt('/login');
       await screen.findByRole('heading', { name: 'Sign in' });
@@ -200,9 +204,8 @@ describe('InkRoom web app', () => {
       );
       const created = roadmap.getByText(/Created/).querySelector('time');
       expect(created?.getAttribute('dateTime')).toBe('2026-01-02T09:30:00.000Z');
-      expect(roadmap.getByText(/Modified/).querySelector('time')?.getAttribute('dateTime')).toBe(
-        '2026-01-03T10:45:00.000Z',
-      );
+      const modified = roadmap.getByText(/Modified/).querySelectorAll('time')[1];
+      expect(modified?.getAttribute('dateTime')).toBe('2026-01-03T10:45:00.000Z');
 
       const viewerRow = within(rows[1] as HTMLElement);
       expect(viewerRow.getByText('Viewer')).toBeTruthy();
@@ -250,7 +253,8 @@ describe('InkRoom web app', () => {
       });
       fireEvent.click(screen.getByRole('button', { name: 'Create board' }));
 
-      const titles = await screen.findAllByRole('listitem');
+      await screen.findByText('Brainstorm');
+      const titles = screen.getAllByRole('listitem');
       expect(titles[0]?.textContent).toContain('Brainstorm');
       expect(titles[1]?.textContent).toContain('Roadmap');
     });

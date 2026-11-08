@@ -43,9 +43,9 @@ describe('registerRequestSchema', () => {
 
 describe('loginRequestSchema', () => {
   it('accepts any non-empty password up to 128 characters', () => {
-    expect(
-      loginRequestSchema.safeParse({ email: 'ada@example.com', password: 'a' }).success,
-    ).toBe(true);
+    expect(loginRequestSchema.safeParse({ email: 'ada@example.com', password: 'a' }).success).toBe(
+      true,
+    );
   });
 
   it('rejects an empty password', () => {

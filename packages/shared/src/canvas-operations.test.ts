@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import type { CanvasObject } from './canvas';
 import {
   OperationError,
   applyOperations,
   canvasOperationSchema,
   diffDocuments,
-  type CanvasObject,
   type CanvasOperation,
 } from './canvas-operations';
 
@@ -32,30 +32,34 @@ const text = (n: number, value = 'Hi'): CanvasObject => ({
 
 describe('applyOperations', () => {
   it('inserts objects at an index', () => {
-    const result = applyOperations([rect(1), rect(2)], [
-      { type: 'insert', index: 1, objects: [rect(3)] },
-    ]);
+    const result = applyOperations(
+      [rect(1), rect(2)],
+      [{ type: 'insert', index: 1, objects: [rect(3)] }],
+    );
     expect(result.map((object) => object.id)).toEqual([uuid(1), uuid(3), uuid(2)]);
   });
 
   it('removes objects by id', () => {
-    const result = applyOperations([rect(1), rect(2), rect(3)], [
-      { type: 'remove', ids: [uuid(1), uuid(3)] },
-    ]);
+    const result = applyOperations(
+      [rect(1), rect(2), rect(3)],
+      [{ type: 'remove', ids: [uuid(1), uuid(3)] }],
+    );
     expect(result.map((object) => object.id)).toEqual([uuid(2)]);
   });
 
   it('updates only the named fields of an object', () => {
-    const [updated] = applyOperations([rect(1)], [
-      { type: 'update', id: uuid(1), changes: { x: 50, width: 80 } },
-    ]);
+    const [updated] = applyOperations(
+      [rect(1)],
+      [{ type: 'update', id: uuid(1), changes: { x: 50, width: 80 } }],
+    );
     expect(updated).toEqual({ ...rect(1), x: 50, width: 80 });
   });
 
   it('reorders by a full permutation of ids', () => {
-    const result = applyOperations([rect(1), rect(2), rect(3)], [
-      { type: 'reorder', ids: [uuid(3), uuid(1), uuid(2)] },
-    ]);
+    const result = applyOperations(
+      [rect(1), rect(2), rect(3)],
+      [{ type: 'reorder', ids: [uuid(3), uuid(1), uuid(2)] }],
+    );
     expect(result.map((object) => object.id)).toEqual([uuid(3), uuid(1), uuid(2)]);
   });
 
@@ -94,9 +98,21 @@ describe('applyOperations', () => {
 
   it('rejects a field that does not apply to the object type', () => {
     expect(() =>
-      applyOperations([rect(1)], [
-        { type: 'update', id: uuid(1), changes: { points: [{ x: 0, y: 0 }, { x: 1, y: 1 }] } },
-      ]),
+      applyOperations(
+        [rect(1)],
+        [
+          {
+            type: 'update',
+            id: uuid(1),
+            changes: {
+              points: [
+                { x: 0, y: 0 },
+                { x: 1, y: 1 },
+              ],
+            },
+          },
+        ],
+      ),
     ).toThrow(/does not apply to rectangle/);
   });
 

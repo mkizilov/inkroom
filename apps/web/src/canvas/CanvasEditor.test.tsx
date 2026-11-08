@@ -60,8 +60,9 @@ describe('CanvasEditor controls', () => {
     expect(screen.getByRole('button', { name: 'Rectangle' }).getAttribute('aria-pressed')).toBe(
       'false',
     );
-    expect((screen.getByRole('button', { name: 'Delete selected' }) as HTMLButtonElement).disabled)
-      .toBe(true);
+    expect(
+      (screen.getByRole('button', { name: 'Delete selected' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
   });
 
   it('switches tools from the toolbar', () => {
@@ -190,12 +191,8 @@ describe('CanvasEditor editing commands', () => {
   it('disables undo and redo until there is something to undo', () => {
     render(<CanvasEditor />);
 
-    expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
-    expect((screen.getByRole('button', { name: 'Redo' }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
+    expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Redo' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('reports the drawn object and its size in the status line', () => {

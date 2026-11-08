@@ -148,19 +148,16 @@ describe('board export validation', () => {
   });
 
   it('refuses more objects than a board can hold', () => {
-    const many = Array.from(
-      { length: MAX_CANVAS_OBJECTS + 1 },
-      (_, index): CanvasObject => ({
-        id: id(index + 1),
-        type: 'rectangle',
-        x: 0,
-        y: 0,
-        width: 1,
-        height: 1,
-        stroke: '#000000',
-        strokeWidth: 1,
-      }),
-    );
+    const many = Array.from({ length: MAX_CANVAS_OBJECTS + 1 }, (_, index): CanvasObject => ({
+      id: id(index + 1),
+      type: 'rectangle',
+      x: 0,
+      y: 0,
+      width: 1,
+      height: 1,
+      stroke: '#000000',
+      strokeWidth: 1,
+    }));
 
     expect(() => serializeBoardExport({ ...input, objects: many })).toThrow(ZodError);
     const value = asObject(serializeBoardExport(input));

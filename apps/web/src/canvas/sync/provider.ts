@@ -50,12 +50,7 @@ export interface TimerLike {
 }
 
 export type ConnectionState =
-  | 'connecting'
-  | 'connected'
-  | 'syncing'
-  | 'reconnecting'
-  | 'offline'
-  | 'stopped';
+  'connecting' | 'connected' | 'syncing' | 'reconnecting' | 'offline' | 'stopped';
 
 export interface ProviderOptions {
   document: CanvasDocument;

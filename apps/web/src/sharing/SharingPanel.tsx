@@ -19,9 +19,7 @@ interface SharingPanelProps {
 }
 
 type MembersState =
-  | { kind: 'loading' }
-  | { kind: 'loaded'; items: Member[] }
-  | { kind: 'error'; message: string };
+  { kind: 'loading' } | { kind: 'loaded'; items: Member[] } | { kind: 'error'; message: string };
 
 function asGrantable(value: string): GrantableRole | undefined {
   const parsed = grantableRoleSchema.safeParse(value);
@@ -107,7 +105,7 @@ export function SharingPanel({ boardId, role, currentUserId }: SharingPanelProps
                   {member.displayName}
                   {isSelf ? ' (you)' : ''}
                 </span>
-                {member.email && <span className="member-email">{member.email}</span>}
+                {isOwner && member.email && <span className="member-email">{member.email}</span>}
                 {canChange ? (
                   <select
                     aria-label={`Role for ${member.displayName}`}

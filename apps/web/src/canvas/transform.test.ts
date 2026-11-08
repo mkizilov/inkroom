@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CanvasObject } from '@inkroom/shared';
+import type { Rect } from './geometry';
 import {
   handleAt,
   handlePoint,
@@ -7,7 +8,6 @@ import {
   scaleObjectInBox,
   selectionBounds,
   transformObjects,
-  type Rect,
 } from './transform';
 
 const style = { stroke: '#000000', strokeWidth: 2 };

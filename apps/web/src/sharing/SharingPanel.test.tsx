@@ -86,7 +86,14 @@ describe('SharingPanel', () => {
     const fetchMock = stubFetch((method) => {
       if (method === 'PATCH') {
         viewerRole = 'editor';
-        return json({ member: { userId: VIEWER, displayName: 'Grace', role: 'editor' } });
+        return json({
+          member: {
+            userId: VIEWER,
+            displayName: 'Grace',
+            role: 'editor',
+            email: 'grace@example.com',
+          },
+        });
       }
       return json(members(viewerRole));
     });

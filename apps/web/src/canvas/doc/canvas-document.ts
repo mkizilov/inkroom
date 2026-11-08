@@ -7,6 +7,7 @@ import {
 } from '@inkroom/shared';
 import {
   Awareness,
+  normalizeOrder,
   objectsMapOf,
   readOrderedObjects,
   writeOperations,
@@ -17,6 +18,8 @@ import {
 // REMOTE_ORIGIN and are not tracked, so undo never reverts another person's change.
 export const LOCAL_ORIGIN = { source: 'local' } as const;
 export const REMOTE_ORIGIN = { source: 'remote' } as const;
+// Renumbering after an undo or redo is not an edit of its own, so it stays off the undo stack.
+const NORMALIZE_ORIGIN = { source: 'normalize' } as const;
 
 // Writes within this many milliseconds of each other can share one undo step, unless a write is
 // marked as a boundary. Discrete actions always start a new step, so this only groups the
@@ -130,6 +133,7 @@ export class CanvasDocument {
   undo(): boolean {
     this.undoManager.stopCapturing();
     const undone = this.undoManager.undo() !== null;
+    this.settleOrder();
     this.undoManager.stopCapturing();
     return undone;
   }
@@ -137,8 +141,13 @@ export class CanvasDocument {
   redo(): boolean {
     this.undoManager.stopCapturing();
     const redone = this.undoManager.redo() !== null;
+    this.settleOrder();
     this.undoManager.stopCapturing();
     return redone;
+  }
+
+  private settleOrder(): void {
+    this.doc.transact(() => normalizeOrder(this.objects), NORMALIZE_ORIGIN);
   }
 
   destroy(): void {

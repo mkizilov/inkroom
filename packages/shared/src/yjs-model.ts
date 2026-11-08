@@ -166,6 +166,12 @@ function renumber(objects: ObjectsMap, order: readonly string[]): void {
   });
 }
 
+// Gives every object the position it reads in, so the stored order is dense again. Undo and redo
+// revert only this client's changes, so they can leave a gap that other clients placed around.
+export function normalizeOrder(objects: ObjectsMap): void {
+  renumber(objects, readOrderedIds(objects));
+}
+
 // Writes operations into the objects map. Call this inside a Yjs transaction. The operations are
 // interpreted exactly as applyOperations interprets them, so the result matches the typed model.
 export function writeOperations(objects: ObjectsMap, operations: readonly CanvasOperation[]): void {

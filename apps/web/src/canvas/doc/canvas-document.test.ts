@@ -121,6 +121,24 @@ describe('local undo and redo', () => {
   });
 });
 
+describe('z-order after undo', () => {
+  it('closes the gap an undo leaves, on both replicas, without making the renumbering undoable', () => {
+    const a = new CanvasDocument();
+    const b = new CanvasDocument();
+    connect(a, b);
+    a.apply([{ type: 'insert', index: 0, objects: [rect(1)] }], { boundary: true });
+    b.apply([{ type: 'insert', index: 1, objects: [rect(2)] }], { boundary: true });
+
+    expect(a.undo()).toBe(true);
+
+    expect(idsOf(a.snapshot())).toEqual([uuid(2)]);
+    expect(idsOf(b.snapshot())).toEqual([uuid(2)]);
+    expect(consistencyProblems(a.objects)).toEqual([]);
+    expect(consistencyProblems(b.objects)).toEqual([]);
+    expect(a.canUndo()).toBe(false);
+  });
+});
+
 describe('remote updates', () => {
   it('are visible on the other replica but never become local undo steps', () => {
     const a = new CanvasDocument();
@@ -307,10 +325,9 @@ describe('convergence', () => {
   it('concurrent reorders converge to one order on every replica', () => {
     const a = new CanvasDocument();
     const b = new CanvasDocument();
-    a.apply(
-      [{ type: 'insert', index: 0, objects: [rect(1), rect(2), rect(3)] }],
-      { boundary: true },
-    );
+    a.apply([{ type: 'insert', index: 0, objects: [rect(1), rect(2), rect(3)] }], {
+      boundary: true,
+    });
     b.applyRemote(a.encodeState());
 
     const aUpdates: Uint8Array[] = [];

@@ -33,8 +33,6 @@ describe('describeCanvas', () => {
   });
 
   it('ignores selected ids that are no longer in the document', () => {
-    expect(describeCanvas([rect('1', 0, 10, 10)], [id('9')])).toBe(
-      '1 object · 1 selected',
-    );
+    expect(describeCanvas([rect('1', 0, 10, 10)], [id('9')])).toBe('1 object · 1 selected');
   });
 });

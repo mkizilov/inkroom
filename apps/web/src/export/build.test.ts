@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseBoardExport, type CanvasObject } from '@inkroom/shared';
-import {
-  ExportError,
-  buildJsonText,
-  exportFileName,
-  pngSizeError,
-} from './build';
+import { ExportError, buildJsonText, exportFileName, pngSizeError } from './build';
 import { EMPTY_BOARD_REGION, selectForExport } from './regions';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -64,28 +59,21 @@ describe('JSON export', () => {
     ]);
   });
 
-  it(
-    'refuses an export larger than an import can accept',
-    () => {
-      const points = Array.from({ length: 10_000 }, () => ({ x: 1234.5678, y: 9876.5432 }));
-      const pens: CanvasObject[] = Array.from(
-        { length: 30 },
-        (_, index): CanvasObject => ({
-          id: id(index + 1),
-          type: 'pen',
-          x: 0,
-          y: 0,
-          points,
-          stroke: '#000000',
-          strokeWidth: 1,
-        }),
-      );
-      const selection = selectForExport('board', pens, [], EMPTY_BOARD_REGION);
+  it('refuses an export larger than an import can accept', () => {
+    const points = Array.from({ length: 10_000 }, () => ({ x: 1234.5678, y: 9876.5432 }));
+    const pens: CanvasObject[] = Array.from({ length: 30 }, (_, index): CanvasObject => ({
+      id: id(index + 1),
+      type: 'pen',
+      x: 0,
+      y: 0,
+      points,
+      stroke: '#000000',
+      strokeWidth: 1,
+    }));
+    const selection = selectForExport('board', pens, [], EMPTY_BOARD_REGION);
 
-      expect(() => buildJsonText('Too large', selection, exportedAt)).toThrow(ExportError);
-    },
-    60_000,
-  );
+    expect(() => buildJsonText('Too large', selection, exportedAt)).toThrow(ExportError);
+  }, 60_000);
 });
 
 describe('PNG size limit', () => {

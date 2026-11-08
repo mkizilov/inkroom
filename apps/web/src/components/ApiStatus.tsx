@@ -2,9 +2,7 @@ import { useEffect, useState } from 'react';
 import { healthResponseSchema, type HealthResponse } from '@inkroom/shared';
 
 type ApiHealth =
-  | { kind: 'checking' }
-  | { kind: 'loaded'; health: HealthResponse }
-  | { kind: 'unreachable' };
+  { kind: 'checking' } | { kind: 'loaded'; health: HealthResponse } | { kind: 'unreachable' };
 
 export function ApiStatus() {
   const [health, setHealth] = useState<ApiHealth>({ kind: 'checking' });

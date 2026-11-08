@@ -599,7 +599,8 @@ describe('deletion, copy, paste and duplicate', () => {
   });
 
   it('copies and pastes with a growing offset, each paste being its own step', () => {
-    let counter = 0;
+    // The source object is uniqueId(1), so the pasted copies must start after it.
+    let counter = 1;
     const makeId = () => uniqueId(++counter);
     const start = withView({ scale: 1, offsetX: 0, offsetY: 0 }, [rectangle('1', 0, 0, 50, 50)]);
 
@@ -614,7 +615,7 @@ describe('deletion, copy, paste and duplicate', () => {
     expect(pasted.objects).toHaveLength(3);
     expect(pasted.objects[1]).toMatchObject({ x: PASTE_OFFSET, y: PASTE_OFFSET });
     expect(pasted.objects[2]).toMatchObject({ x: PASTE_OFFSET * 2, y: PASTE_OFFSET * 2 });
-    expect(pasted.selectedIds).toEqual([uniqueId(2)]);
+    expect(pasted.selectedIds).toEqual([uniqueId(3)]);
     expect(new Set(pasted.objects.map((object) => object.id)).size).toBe(3);
     expect(writesOf(pasted).map((write) => write.boundary)).toEqual([true, true]);
   });

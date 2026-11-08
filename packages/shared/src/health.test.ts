@@ -25,8 +25,8 @@ describe('healthResponseSchema', () => {
   });
 
   it('rejects timestamps that are not ISO 8601', () => {
-    expect(healthResponseSchema.safeParse({ ...validResponse, timestamp: 'yesterday' }).success).toBe(
-      false,
-    );
+    expect(
+      healthResponseSchema.safeParse({ ...validResponse, timestamp: 'yesterday' }).success,
+    ).toBe(false);
   });
 });
