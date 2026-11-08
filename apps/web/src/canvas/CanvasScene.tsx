@@ -1,6 +1,7 @@
 import { Arrow, Ellipse, Group, Layer, Line, Rect, Stage, Text } from 'react-konva';
 import type { CanvasObject } from '@inkroom/shared';
 import { objectBounds, type Rect as WorldRect } from './geometry';
+import { HANDLES, HANDLE_SIZE_PX, handlePoint } from './transform';
 import type { Viewport } from './viewport';
 
 const SELECTION_COLOR = '#0969da';
@@ -12,6 +13,8 @@ interface CanvasSceneProps {
   objects: readonly CanvasObject[];
   draft: CanvasObject | null;
   selectedIds: readonly string[];
+  selectionBox: WorldRect | null;
+  showHandles: boolean;
   marquee: WorldRect | null;
   hiddenTextId: string | null;
 }
@@ -112,10 +115,14 @@ export function CanvasScene({
   objects,
   draft,
   selectedIds,
+  selectionBox,
+  showHandles,
   marquee,
   hiddenTextId,
 }: CanvasSceneProps) {
   const selected = objects.filter((object) => selectedIds.includes(object.id));
+  // Handles keep a constant on-screen size as the zoom changes.
+  const handleSize = HANDLE_SIZE_PX / viewport.scale;
 
   return (
     <Stage
@@ -140,7 +147,7 @@ export function CanvasScene({
           const bounds = objectBounds(object);
           return (
             <Rect
-              key={`selection-${object.id}`}
+              key={`outline-${object.id}`}
               x={bounds.x}
               y={bounds.y}
               width={bounds.width}
@@ -153,6 +160,37 @@ export function CanvasScene({
             />
           );
         })}
+        {selectionBox && (
+          <Rect
+            x={selectionBox.x}
+            y={selectionBox.y}
+            width={selectionBox.width}
+            height={selectionBox.height}
+            stroke={SELECTION_COLOR}
+            strokeWidth={1}
+            strokeScaleEnabled={false}
+            listening={false}
+          />
+        )}
+        {selectionBox &&
+          showHandles &&
+          HANDLES.map((handle) => {
+            const anchor = handlePoint(selectionBox, handle);
+            return (
+              <Rect
+                key={`handle-${handle}`}
+                x={anchor.x - handleSize / 2}
+                y={anchor.y - handleSize / 2}
+                width={handleSize}
+                height={handleSize}
+                fill="#ffffff"
+                stroke={SELECTION_COLOR}
+                strokeWidth={1}
+                strokeScaleEnabled={false}
+                listening={false}
+              />
+            );
+          })}
         {marquee && (
           <Rect
             x={marquee.x}

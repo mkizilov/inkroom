@@ -6,6 +6,8 @@ import {
   type TextObject,
 } from '@inkroom/shared';
 import { normalizeRect, objectsInRect, pickObject, type Rect } from './geometry';
+import { EMPTY_HISTORY, recordChange, redoChange, undoChange, type History } from './history';
+import { handleAt, resizeBox, selectionBounds, transformObjects, type Handle } from './transform';
 import {
   INITIAL_VIEWPORT,
   panBy,
@@ -19,6 +21,7 @@ import {
 
 export type Tool = 'select' | 'pan' | 'pen' | 'rectangle' | 'ellipse' | 'line' | 'arrow' | 'text';
 type ShapeTool = 'rectangle' | 'ellipse' | 'line' | 'arrow';
+export type LayerDirection = 'forward' | 'backward' | 'front' | 'back';
 
 export const TOOL_SHORTCUTS: Readonly<Record<string, Tool>> = {
   v: 'select',
@@ -34,16 +37,39 @@ export const TOOL_SHORTCUTS: Readonly<Record<string, Tool>> = {
 export const DEFAULT_STROKE = '#1f2328';
 export const DEFAULT_STROKE_WIDTH = 2;
 export const DEFAULT_FONT_SIZE = 24;
+export const PASTE_OFFSET = 20;
 
 // Screen-pixel tolerances. Converted to world units with the current zoom before use.
 const HIT_SLOP_PX = 6;
 const MIN_PEN_SPACING_PX = 1.5;
+// Smallest width or height a selection can be resized to, in world units.
+const MIN_BOX_SIZE = 1;
 
+export interface ClipboardState {
+  objects: CanvasObject[];
+  pasteCount: number;
+}
+
+// A pointer gesture. Move, resize and draw keep the document from the gesture's start so the
+// preview can be recomputed on every pointer move, and so cancelling restores it exactly.
 type Gesture =
   | { kind: 'pan'; startScreen: Point; startViewport: Viewport }
-  | { kind: 'move'; startWorld: Point; originals: Record<string, Point> }
+  | {
+      kind: 'move';
+      startWorld: Point;
+      startObjects: CanvasObject[];
+      ids: string[];
+      startBox: Rect;
+    }
+  | {
+      kind: 'resize';
+      handle: Handle;
+      startObjects: CanvasObject[];
+      ids: string[];
+      startBox: Rect;
+    }
   | { kind: 'marquee'; startWorld: Point; base: string[] }
-  | { kind: 'draw'; startWorld: Point };
+  | { kind: 'draw'; startWorld: Point; startObjects: CanvasObject[] };
 
 export interface EditorState {
   objects: CanvasObject[];
@@ -55,8 +81,13 @@ export interface EditorState {
   marquee: Rect | null;
   gesture: Gesture | null;
   editingTextId: string | null;
+  // The document before the active text session, so the whole session is one undo step.
+  textSnapshot: CanvasObject[] | null;
+  history: History;
+  clipboard: ClipboardState | null;
 }
 
+// `makeId` is supplied by the caller, so the reducer stays pure and tests can be deterministic.
 export type EditorAction =
   | { type: 'pointerDown'; screen: Point; button: number; shift: boolean; id: string }
   | { type: 'pointerMove'; screen: Point }
@@ -68,10 +99,19 @@ export type EditorAction =
   | { type: 'wheel'; anchor: Point; input: WheelInput }
   | { type: 'setTool'; tool: Tool }
   | { type: 'setSpaceHeld'; held: boolean }
-  | { type: 'deleteSelected' }
+  | { type: 'selectAll' }
   | { type: 'clearSelection' }
   | { type: 'changeText'; id: string; text: string }
-  | { type: 'finishText' };
+  | { type: 'finishText' }
+  | { type: 'copy' }
+  | { type: 'cut' }
+  | { type: 'paste'; makeId: () => string }
+  | { type: 'duplicate'; makeId: () => string }
+  | { type: 'deleteSelected' }
+  | { type: 'nudge'; dx: number; dy: number }
+  | { type: 'reorder'; direction: LayerDirection }
+  | { type: 'undo' }
+  | { type: 'redo' };
 
 type PointerDownAction = Extract<EditorAction, { type: 'pointerDown' }>;
 
@@ -86,6 +126,9 @@ export function createEditorState(): EditorState {
     marquee: null,
     gesture: null,
     editingTextId: null,
+    textSnapshot: null,
+    history: EMPTY_HISTORY,
+    clipboard: null,
   };
 }
 
@@ -102,7 +145,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     case 'pointerUp':
       return endGesture(state);
     case 'pointerCancel':
-      return { ...state, gesture: null, draft: null, marquee: null };
+      return cancelGesture(state);
     case 'doubleClick':
       return doubleClick(state, action.screen);
     case 'setViewport':
@@ -114,34 +157,71 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       };
     case 'wheel':
       // Computed from the latest state, so back-to-back wheel events accumulate.
-      return {
-        ...state,
-        viewport: wheelViewport(state.viewport, action.anchor, action.input),
-      };
+      return { ...state, viewport: wheelViewport(state.viewport, action.anchor, action.input) };
     case 'setTool':
-      return {
-        ...finishText(state),
-        tool: action.tool,
-        selectedIds: [],
-        draft: null,
-        marquee: null,
-        gesture: null,
-      };
+      return { ...settle(state), tool: action.tool, selectedIds: [] };
     case 'setSpaceHeld':
       return { ...state, spaceHeld: action.held };
-    case 'deleteSelected':
-      return removeObjects(state, new Set(state.selectedIds));
+    case 'selectAll': {
+      const settled = settle(state);
+      return { ...settled, selectedIds: settled.objects.map((object) => object.id) };
+    }
     case 'clearSelection':
       return { ...state, selectedIds: [] };
     case 'changeText':
       return changeText(state, action.id, action.text);
     case 'finishText':
       return finishText(state);
+    case 'copy':
+      return copySelection(settle(state));
+    case 'cut': {
+      const settled = settle(state);
+      return deleteSelected(copySelection(settled));
+    }
+    case 'paste':
+      return paste(settle(state), action.makeId);
+    case 'duplicate':
+      return duplicate(settle(state), action.makeId);
+    case 'deleteSelected':
+      return deleteSelected(settle(state));
+    case 'nudge': {
+      const settled = settle(state);
+      return nudge(settled, action.dx, action.dy);
+    }
+    case 'reorder':
+      return reorder(settle(state), action.direction);
+    case 'undo':
+      return undo(state);
+    case 'redo':
+      return redo(state);
   }
 }
 
-function baseStyle() {
-  return { stroke: DEFAULT_STROKE, strokeWidth: DEFAULT_STROKE_WIDTH };
+// Ends the active text session and cancels any pointer gesture, so that a keyboard command
+// acts on the committed document.
+function settle(state: EditorState): EditorState {
+  return cancelGesture(finishText(state));
+}
+
+// Records a change as one undo step. Does nothing when the document is unchanged.
+function commit(
+  state: EditorState,
+  before: readonly CanvasObject[],
+  after: readonly CanvasObject[],
+): EditorState {
+  return { ...state, objects: [...after], history: recordChange(state.history, before, after) };
+}
+
+function cancelGesture(state: EditorState): EditorState {
+  const gesture = state.gesture;
+  const idle = { ...state, gesture: null, draft: null, marquee: null };
+  if (
+    gesture &&
+    (gesture.kind === 'move' || gesture.kind === 'resize' || gesture.kind === 'draw')
+  ) {
+    return { ...idle, objects: gesture.startObjects };
+  }
+  return idle;
 }
 
 function pointerDown(state: EditorState, action: PointerDownAction): EditorState {
@@ -176,8 +256,25 @@ function pointerDown(state: EditorState, action: PointerDownAction): EditorState
 }
 
 function beginSelection(state: EditorState, world: Point, shift: boolean): EditorState {
-  const hit = pickObject(state.objects, world, hitTolerance(state.viewport));
+  const tolerance = hitTolerance(state.viewport);
 
+  // Handles on the selection box take priority over the objects underneath them.
+  const box = selectionBounds(state.objects, state.selectedIds);
+  const handle = box ? handleAt(box, world, tolerance) : null;
+  if (box && handle) {
+    return {
+      ...state,
+      gesture: {
+        kind: 'resize',
+        handle,
+        startObjects: state.objects,
+        ids: [...state.selectedIds],
+        startBox: box,
+      },
+    };
+  }
+
+  const hit = pickObject(state.objects, world, tolerance);
   if (!hit) {
     const base = shift ? state.selectedIds : [];
     return {
@@ -201,28 +298,21 @@ function beginSelection(state: EditorState, world: Point, shift: boolean): Edito
     selectedIds = [hit.id];
   }
 
+  const bounds = selectionBounds(state.objects, selectedIds);
+  if (!bounds) {
+    return state;
+  }
   return {
     ...state,
     selectedIds,
     gesture: {
       kind: 'move',
       startWorld: world,
-      originals: originsOf(state.objects, selectedIds),
+      startObjects: state.objects,
+      ids: selectedIds,
+      startBox: bounds,
     },
   };
-}
-
-function originsOf(
-  objects: readonly CanvasObject[],
-  ids: readonly string[],
-): Record<string, Point> {
-  const origins: Record<string, Point> = {};
-  for (const object of objects) {
-    if (ids.includes(object.id)) {
-      origins[object.id] = { x: object.x, y: object.y };
-    }
-  }
-  return origins;
 }
 
 function createText(state: EditorState, id: string, world: Point): EditorState {
@@ -240,8 +330,13 @@ function createText(state: EditorState, id: string, world: Point): EditorState {
     objects: [...state.objects, text],
     selectedIds: [id],
     editingTextId: id,
+    textSnapshot: state.objects,
     gesture: null,
   };
+}
+
+function baseStyle() {
+  return { stroke: DEFAULT_STROKE, strokeWidth: DEFAULT_STROKE_WIDTH };
 }
 
 function penDraft(id: string, origin: Point): PenObject {
@@ -290,7 +385,7 @@ function startDraft(state: EditorState, draft: CanvasObject, start: Point): Edit
     ...state,
     draft,
     selectedIds: [],
-    gesture: { kind: 'draw', startWorld: start },
+    gesture: { kind: 'draw', startWorld: start, startObjects: state.objects },
   };
 }
 
@@ -308,8 +403,26 @@ function pointerMove(state: EditorState, screen: Point): EditorState {
 
   const world = screenToWorld(screen, state.viewport);
   switch (gesture.kind) {
-    case 'move':
-      return moveObjects(state, gesture.startWorld, gesture.originals, world);
+    case 'move': {
+      const dx = world.x - gesture.startWorld.x;
+      const dy = world.y - gesture.startWorld.y;
+      const target = {
+        ...gesture.startBox,
+        x: gesture.startBox.x + dx,
+        y: gesture.startBox.y + dy,
+      };
+      return {
+        ...state,
+        objects: transformObjects(gesture.startObjects, gesture.ids, gesture.startBox, target),
+      };
+    }
+    case 'resize': {
+      const box = resizeBox(gesture.startBox, gesture.handle, world, MIN_BOX_SIZE);
+      return {
+        ...state,
+        objects: transformObjects(gesture.startObjects, gesture.ids, gesture.startBox, box),
+      };
+    }
     case 'marquee': {
       const rect = normalizeRect(gesture.startWorld, world);
       const hits = objectsInRect(state.objects, rect).map((object) => object.id);
@@ -325,23 +438,6 @@ function pointerMove(state: EditorState, screen: Point): EditorState {
         draft: updateDraft(state.draft, gesture.startWorld, world, state.viewport),
       };
   }
-}
-
-function moveObjects(
-  state: EditorState,
-  startWorld: Point,
-  originals: Record<string, Point>,
-  world: Point,
-): EditorState {
-  const dx = world.x - startWorld.x;
-  const dy = world.y - startWorld.y;
-  return {
-    ...state,
-    objects: state.objects.map((object) => {
-      const origin = originals[object.id];
-      return origin ? { ...object, x: origin.x + dx, y: origin.y + dy } : object;
-    }),
-  };
 }
 
 function updateDraft(
@@ -375,12 +471,19 @@ function updateDraft(
   return draft;
 }
 
+// Commits the gesture. Move and resize record the change from the gesture's start, so a drag is
+// one undo step, and a click that moves nothing records nothing.
 function endGesture(state: EditorState): EditorState {
-  const base = { ...state, gesture: null, marquee: null, draft: null };
-  if (state.gesture?.kind === 'draw' && state.draft && isMeaningful(state.draft)) {
-    return { ...base, objects: [...state.objects, state.draft], selectedIds: [state.draft.id] };
+  const gesture = state.gesture;
+  const idle = { ...state, gesture: null, draft: null, marquee: null };
+  if (gesture?.kind === 'move' || gesture?.kind === 'resize') {
+    return commit(idle, gesture.startObjects, state.objects);
   }
-  return base;
+  if (gesture?.kind === 'draw' && state.draft && isMeaningful(state.draft)) {
+    const after = [...gesture.startObjects, state.draft];
+    return { ...commit(idle, gesture.startObjects, after), selectedIds: [state.draft.id] };
+  }
+  return idle;
 }
 
 // A click without a drag should not leave an empty shape behind.
@@ -403,14 +506,22 @@ function doubleClick(state: EditorState, screen: Point): EditorState {
   if (state.tool !== 'select') {
     return state;
   }
-  const world = screenToWorld(screen, state.viewport);
-  const hit = pickObject(state.objects, world, hitTolerance(state.viewport));
+  const current = finishText(state);
+  const world = screenToWorld(screen, current.viewport);
+  const hit = pickObject(current.objects, world, hitTolerance(current.viewport));
   if (!hit || hit.type !== 'text') {
-    return state;
+    return current;
   }
-  return { ...state, selectedIds: [hit.id], editingTextId: hit.id };
+  return {
+    ...current,
+    selectedIds: [hit.id],
+    editingTextId: hit.id,
+    textSnapshot: current.objects,
+  };
 }
 
+// Text edits are applied live so the overlay and the canvas agree. The session is recorded when
+// it finishes.
 function changeText(state: EditorState, id: string, text: string): EditorState {
   const clipped = text.slice(0, MAX_TEXT_LENGTH);
   return {
@@ -421,27 +532,170 @@ function changeText(state: EditorState, id: string, text: string): EditorState {
   };
 }
 
-// Leaves text editing. A text object left empty is removed, so stray clicks do not leave
-// invisible objects behind.
+// Leaves text editing and records the session as one step. A text object left empty is removed,
+// so stray clicks do not leave invisible objects behind.
 function finishText(state: EditorState): EditorState {
   if (!state.editingTextId) {
     return state;
   }
   const id = state.editingTextId;
   const target = state.objects.find((object) => object.id === id);
-  const stopped = { ...state, editingTextId: null };
-  if (target?.type === 'text' && target.text.trim() === '') {
-    return removeObjects(stopped, new Set([id]));
-  }
-  return stopped;
+  const empty = target?.type === 'text' && target.text.trim() === '';
+  const objects = empty ? state.objects.filter((object) => object.id !== id) : state.objects;
+  const selectedIds = empty
+    ? state.selectedIds.filter((selected) => selected !== id)
+    : state.selectedIds;
+  const stopped = { ...state, objects, selectedIds, editingTextId: null, textSnapshot: null };
+  return commit(stopped, state.textSnapshot ?? state.objects, objects);
 }
 
-function removeObjects(state: EditorState, ids: ReadonlySet<string>): EditorState {
+function copySelection(state: EditorState): EditorState {
+  const selected = new Set(state.selectedIds);
+  const objects = state.objects
+    .filter((object) => selected.has(object.id))
+    .map((object) => structuredClone(object));
+  if (objects.length === 0) {
+    return state;
+  }
+  return { ...state, clipboard: { objects, pasteCount: 0 } };
+}
+
+function copyAt(object: CanvasObject, dx: number, dy: number, id: string): CanvasObject {
+  return { ...structuredClone(object), id, x: object.x + dx, y: object.y + dy };
+}
+
+// Each paste lands one offset further from the copied position, so repeated pastes do not stack.
+function paste(state: EditorState, makeId: () => string): EditorState {
+  const clipboard = state.clipboard;
+  if (!clipboard || clipboard.objects.length === 0) {
+    return state;
+  }
+  const offset = PASTE_OFFSET * (clipboard.pasteCount + 1);
+  const copies = clipboard.objects.map((object) => copyAt(object, offset, offset, makeId()));
   return {
-    ...state,
-    objects: state.objects.filter((object) => !ids.has(object.id)),
-    selectedIds: state.selectedIds.filter((id) => !ids.has(id)),
-    editingTextId:
-      state.editingTextId && ids.has(state.editingTextId) ? null : state.editingTextId,
+    ...commit(state, state.objects, [...state.objects, ...copies]),
+    selectedIds: copies.map((copy) => copy.id),
+    clipboard: { ...clipboard, pasteCount: clipboard.pasteCount + 1 },
   };
+}
+
+// Copies the selection in place, leaving the clipboard alone.
+function duplicate(state: EditorState, makeId: () => string): EditorState {
+  const selected = new Set(state.selectedIds);
+  const sources = state.objects.filter((object) => selected.has(object.id));
+  if (sources.length === 0) {
+    return state;
+  }
+  const copies = sources.map((object) => copyAt(object, PASTE_OFFSET, PASTE_OFFSET, makeId()));
+  return {
+    ...commit(state, state.objects, [...state.objects, ...copies]),
+    selectedIds: copies.map((copy) => copy.id),
+  };
+}
+
+function deleteSelected(state: EditorState): EditorState {
+  if (state.selectedIds.length === 0) {
+    return state;
+  }
+  const doomed = new Set(state.selectedIds);
+  const objects = state.objects.filter((object) => !doomed.has(object.id));
+  return { ...commit(state, state.objects, objects), selectedIds: [] };
+}
+
+function nudge(state: EditorState, dx: number, dy: number): EditorState {
+  if (state.selectedIds.length === 0) {
+    return state;
+  }
+  const selected = new Set(state.selectedIds);
+  const objects = state.objects.map((object) =>
+    selected.has(object.id) ? { ...object, x: object.x + dx, y: object.y + dy } : object,
+  );
+  return commit(state, state.objects, objects);
+}
+
+function reorder(state: EditorState, direction: LayerDirection): EditorState {
+  if (state.selectedIds.length === 0) {
+    return state;
+  }
+  const selected = new Set(state.selectedIds);
+  return commit(state, state.objects, reorderLayers(state.objects, selected, direction));
+}
+
+// Moves the selected objects in z-order. Forward and backward step each selected object past the
+// neighbour it would cross, so a selected run keeps its internal order.
+function reorderLayers(
+  objects: readonly CanvasObject[],
+  selected: ReadonlySet<string>,
+  direction: LayerDirection,
+): CanvasObject[] {
+  const isSelected = (object: CanvasObject) => selected.has(object.id);
+  switch (direction) {
+    case 'front':
+      return [...objects.filter((object) => !isSelected(object)), ...objects.filter(isSelected)];
+    case 'back':
+      return [...objects.filter(isSelected), ...objects.filter((object) => !isSelected(object))];
+    case 'forward': {
+      const result = [...objects];
+      for (let index = result.length - 2; index >= 0; index -= 1) {
+        const lower = result[index];
+        const upper = result[index + 1];
+        if (lower && upper && isSelected(lower) && !isSelected(upper)) {
+          swapAt(result, index, index + 1);
+        }
+      }
+      return result;
+    }
+    case 'backward': {
+      const result = [...objects];
+      for (let index = 1; index < result.length; index += 1) {
+        const current = result[index];
+        const lower = result[index - 1];
+        if (current && lower && isSelected(current) && !isSelected(lower)) {
+          swapAt(result, index - 1, index);
+        }
+      }
+      return result;
+    }
+  }
+}
+
+function swapAt(objects: CanvasObject[], a: number, b: number): void {
+  const first = objects[a];
+  const second = objects[b];
+  if (first && second) {
+    objects[a] = second;
+    objects[b] = first;
+  }
+}
+
+// While a pointer gesture is in progress, the first undo or redo only cancels it. Otherwise it
+// would also step through history, which the user did not ask for.
+function undo(state: EditorState): EditorState {
+  if (state.gesture) {
+    return cancelGesture(state);
+  }
+  const settled = finishText(state);
+  const step = undoChange(settled.objects, settled.history);
+  if (!step) {
+    return settled;
+  }
+  return withExistingSelection({ ...settled, objects: step.objects, history: step.history });
+}
+
+function redo(state: EditorState): EditorState {
+  if (state.gesture) {
+    return cancelGesture(state);
+  }
+  const settled = finishText(state);
+  const step = redoChange(settled.objects, settled.history);
+  if (!step) {
+    return settled;
+  }
+  return withExistingSelection({ ...settled, objects: step.objects, history: step.history });
+}
+
+// Undo and redo can remove objects, so the selection keeps only ids that still exist.
+function withExistingSelection(state: EditorState): EditorState {
+  const present = new Set(state.objects.map((object) => object.id));
+  return { ...state, selectedIds: state.selectedIds.filter((id) => present.has(id)) };
 }

@@ -69,11 +69,23 @@ main:has(.workspace) {
   gap: 0.5rem;
 }
 
+.toolbar-group {
+  display: grid;
+  gap: 0.4rem;
+}
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
+}
+
+.canvas-status {
+  margin: 0 0 0 auto;
+  font-size: 0.875rem;
+  color: #57606a;
+  font-variant-numeric: tabular-nums;
 }
 
 .toolbar button[aria-pressed='true'] {

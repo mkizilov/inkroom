@@ -7,8 +7,10 @@ import {
 } from 'react';
 import type { Point, TextObject } from '@inkroom/shared';
 import { CanvasScene } from './CanvasScene';
-import { createEditorState, editorReducer, TOOL_SHORTCUTS } from './editor';
+import { createEditorState, editorReducer, TOOL_SHORTCUTS, type EditorAction } from './editor';
+import { describeCanvas } from './status';
 import { Toolbar } from './Toolbar';
+import { selectionBounds } from './transform';
 import {
   INITIAL_VIEWPORT,
   pinchSample,
@@ -21,6 +23,18 @@ import {
 const ZOOM_STEP = 1.25;
 // Wheel deltas in lines (Firefox) and pages are converted to approximate pixels.
 const LINE_HEIGHT_PX = 16;
+// Arrow keys nudge the selection by one world unit, or ten with Shift.
+const NUDGE_STEP = 1;
+const LARGE_NUDGE_STEP = 10;
+
+const ARROW_DIRECTIONS: Readonly<Record<string, readonly [number, number]>> = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1],
+};
+
+const newId = () => crypto.randomUUID();
 
 function pointIn(element: HTMLElement, clientX: number, clientY: number): Point {
   const rect = element.getBoundingClientRect();
@@ -32,6 +46,35 @@ function isTypingTarget(target: EventTarget | null): boolean {
     target instanceof HTMLElement &&
     (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')
   );
+}
+
+// Ctrl or Cmd commands. Layout-independent key codes are used so shortcuts work on any keyboard.
+function commandFor(event: KeyboardEvent): EditorAction | null {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey) {
+    return null;
+  }
+  switch (event.code) {
+    case 'KeyZ':
+      return event.shiftKey ? { type: 'redo' } : { type: 'undo' };
+    case 'KeyY':
+      return { type: 'redo' };
+    case 'KeyA':
+      return { type: 'selectAll' };
+    case 'KeyC':
+      return { type: 'copy' };
+    case 'KeyX':
+      return { type: 'cut' };
+    case 'KeyV':
+      return { type: 'paste', makeId: newId };
+    case 'KeyD':
+      return { type: 'duplicate', makeId: newId };
+    case 'BracketRight':
+      return { type: 'reorder', direction: event.shiftKey ? 'front' : 'forward' };
+    case 'BracketLeft':
+      return { type: 'reorder', direction: event.shiftKey ? 'back' : 'backward' };
+    default:
+      return null;
+  }
 }
 
 function pinchFrom(points: Point[]): PinchSample | null {
@@ -97,7 +140,26 @@ export function CanvasEditor() {
         dispatch({ type: 'setSpaceHeld', held: true });
         return;
       }
+
+      const command = commandFor(event);
+      if (command) {
+        event.preventDefault();
+        dispatch(command);
+        return;
+      }
+      if (event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+      }
+
+      const direction = ARROW_DIRECTIONS[event.key];
+      if (direction) {
+        event.preventDefault();
+        const step = event.shiftKey ? LARGE_NUDGE_STEP : NUDGE_STEP;
+        dispatch({ type: 'nudge', dx: direction[0] * step, dy: direction[1] * step });
+        return;
+      }
       if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault();
         dispatch({ type: 'deleteSelected' });
         return;
       }
@@ -106,7 +168,7 @@ export function CanvasEditor() {
         return;
       }
       const tool = TOOL_SHORTCUTS[event.key.toLowerCase()];
-      if (tool && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      if (tool) {
         dispatch({ type: 'setTool', tool });
       }
     };
@@ -144,7 +206,7 @@ export function CanvasEditor() {
         screen,
         button: event.button,
         shift: event.shiftKey,
-        id: crypto.randomUUID(),
+        id: newId(),
       });
     }
   };
@@ -195,17 +257,26 @@ export function CanvasEditor() {
     : undefined;
   const editorPosition = editingText ? worldToScreen(editingText, state.viewport) : null;
   const center = { x: size.width / 2, y: size.height / 2 };
+  const selectionBox = selectionBounds(state.objects, state.selectedIds);
 
   return (
     <div className="canvas-editor">
       <Toolbar
         tool={state.tool}
         scale={state.viewport.scale}
-        canDelete={state.selectedIds.length > 0}
+        status={describeCanvas(state.objects, state.selectedIds)}
+        canEditSelection={state.selectedIds.length > 0}
+        canUndo={state.history.past.length > 0}
+        canRedo={state.history.future.length > 0}
         onToolChange={(tool) => dispatch({ type: 'setTool', tool })}
         onZoomIn={() => dispatch({ type: 'zoom', factor: ZOOM_STEP, anchor: center })}
         onZoomOut={() => dispatch({ type: 'zoom', factor: 1 / ZOOM_STEP, anchor: center })}
         onResetView={() => dispatch({ type: 'setViewport', viewport: INITIAL_VIEWPORT })}
+        onUndo={() => dispatch({ type: 'undo' })}
+        onRedo={() => dispatch({ type: 'redo' })}
+        onDuplicate={() => dispatch({ type: 'duplicate', makeId: newId })}
+        onBringForward={() => dispatch({ type: 'reorder', direction: 'forward' })}
+        onSendBackward={() => dispatch({ type: 'reorder', direction: 'backward' })}
         onDelete={() => dispatch({ type: 'deleteSelected' })}
       />
       <div className="canvas-shell">
@@ -238,6 +309,8 @@ export function CanvasEditor() {
             objects={state.objects}
             draft={state.draft}
             selectedIds={state.selectedIds}
+            selectionBox={selectionBox}
+            showHandles={state.tool === 'select'}
             marquee={state.marquee}
             hiddenTextId={state.editingTextId}
           />

@@ -113,8 +113,9 @@ Run from the repository root.
 - **Boards**: authenticated create, list (keyset-paginated), read, rename and delete, with roles
   enforced per action and a dashboard in the web app. See [docs/boards.md](docs/boards.md).
 - **Canvas**: a local react-konva editor with pan and zoom, pen, rectangle, ellipse, line, arrow,
-  text, and selection. Objects are typed and serializable in `packages/shared` and stored in world
-  coordinates. See [docs/canvas.md](docs/canvas.md).
+  text, selection, resizing, grouped transforms, copy and paste, layer order, keyboard shortcuts and
+  undo and redo. Edits are id-addressed operations in `packages/shared`, ready for collaboration.
+  See [docs/canvas.md](docs/canvas.md).
 - **Web (`apps/web`)**: React 19 with Vite. The app talks to the API only through relative `/api`
   URLs, which the dev server proxies, so no CORS configuration is needed in development.
 
@@ -133,6 +134,10 @@ pnpm --filter @inkroom/api test # one package
 
 Database integration tests use the Compose database on port 21432 (`pnpm db:up` first). Each run
 uses a fresh schema and drops it afterward.
+
+Browser tests use Playwright and cover major editing flows on a real board. They start the API and
+the web app themselves, so PostgreSQL must be running and migrated. Install the browser once with
+`pnpm --filter @inkroom/web exec playwright install chromium`, then run `pnpm test:e2e`.
 
 ## Continuous integration
 
@@ -155,9 +160,9 @@ Node 22. The `pnpm-lock.yaml` file must be committed for the frozen install to s
   versioned migrations, repository modules, seed data, integration tests, authentication
   (register, login, logout, current user, session expiry and revocation, rate limiting, CSRF
   origin checks) with login and registration pages, and board management with a dashboard.
-- Not implemented: canvas persistence and undo, membership management, real-time collaboration,
-  OAuth or social sign-in, Yjs update compaction, email verification, password reset, production
-  Docker images.
+- Not implemented: canvas persistence, membership management, real-time collaboration, OAuth or
+  social sign-in, Yjs update compaction, email verification, password reset, production Docker
+  images.
 
 ## Contributing
 

@@ -48,16 +48,16 @@ function expandRect(rect: Rect, amount: number): Rect {
   };
 }
 
-function boundsOf(points: Point[], padding: number): Rect {
+function boundsOf(points: Point[]): Rect {
   const xs = points.map((point) => point.x);
   const ys = points.map((point) => point.y);
   const minX = Math.min(...xs);
   const minY = Math.min(...ys);
   return {
-    x: minX - padding,
-    y: minY - padding,
-    width: Math.max(...xs) - minX + padding * 2,
-    height: Math.max(...ys) - minY + padding * 2,
+    x: minX,
+    y: minY,
+    width: Math.max(...xs) - minX,
+    height: Math.max(...ys) - minY,
   };
 }
 
@@ -88,25 +88,25 @@ function distanceToPolyline(point: Point, vertices: Point[]): number {
   return best;
 }
 
-export function objectBounds(object: CanvasObject): Rect {
+function absolutePoints(object: { x: number; y: number; points: Point[] }): Point[] {
+  return object.points.map((point) => ({ x: object.x + point.x, y: object.y + point.y }));
+}
+
+// The object's own extent, without stroke padding. Selection boxes and resizing use this, so a
+// box resized to 100 by 60 gives an object whose geometry is exactly 100 by 60.
+export function geometricBounds(object: CanvasObject): Rect {
   switch (object.type) {
     case 'rectangle':
     case 'ellipse':
       return { x: object.x, y: object.y, width: object.width, height: object.height };
     case 'pen':
-      return boundsOf(
-        object.points.map((point) => ({ x: object.x + point.x, y: object.y + point.y })),
-        object.strokeWidth / 2,
-      );
+      return boundsOf(absolutePoints(object));
     case 'line':
     case 'arrow':
-      return boundsOf(
-        [
-          { x: object.x, y: object.y },
-          { x: object.x + object.dx, y: object.y + object.dy },
-        ],
-        object.strokeWidth / 2,
-      );
+      return boundsOf([
+        { x: object.x, y: object.y },
+        { x: object.x + object.dx, y: object.y + object.dy },
+      ]);
     case 'text': {
       const lines = object.text.split('\n');
       const longest = Math.max(1, ...lines.map((line) => line.length));
@@ -120,12 +120,21 @@ export function objectBounds(object: CanvasObject): Rect {
   }
 }
 
+// Bounds used for hit testing. Strokes are padded by half their width.
+export function objectBounds(object: CanvasObject): Rect {
+  const bounds = geometricBounds(object);
+  if (object.type === 'pen' || object.type === 'line' || object.type === 'arrow') {
+    return expandRect(bounds, object.strokeWidth / 2);
+  }
+  return bounds;
+}
+
 // `tolerance` is in world units; callers convert screen pixels with worldLength().
 export function hitTest(object: CanvasObject, point: Point, tolerance: number): boolean {
   switch (object.type) {
     case 'pen': {
-      const vertices = object.points.map((p) => ({ x: object.x + p.x, y: object.y + p.y }));
-      return distanceToPolyline(point, vertices) <= tolerance + object.strokeWidth / 2;
+      const reach = tolerance + object.strokeWidth / 2;
+      return distanceToPolyline(point, absolutePoints(object)) <= reach;
     }
     case 'line':
     case 'arrow': {
@@ -136,7 +145,7 @@ export function hitTest(object: CanvasObject, point: Point, tolerance: number): 
     case 'rectangle': {
       const { x, y, width, height } = object;
       if (object.fill) {
-        return containsPoint(expandRect(objectBounds(object), tolerance), point);
+        return containsPoint(expandRect(geometricBounds(object), tolerance), point);
       }
       const corners = [
         { x, y },
@@ -151,7 +160,7 @@ export function hitTest(object: CanvasObject, point: Point, tolerance: number): 
       const radiusX = object.width / 2;
       const radiusY = object.height / 2;
       if (radiusX <= 0 || radiusY <= 0) {
-        return containsPoint(expandRect(objectBounds(object), tolerance), point);
+        return containsPoint(expandRect(geometricBounds(object), tolerance), point);
       }
       const centerX = object.x + radiusX;
       const centerY = object.y + radiusY;
@@ -161,7 +170,7 @@ export function hitTest(object: CanvasObject, point: Point, tolerance: number): 
       return object.fill ? normalized <= 1 + slack : Math.abs(normalized - 1) <= slack;
     }
     case 'text':
-      return containsPoint(expandRect(objectBounds(object), tolerance), point);
+      return containsPoint(expandRect(geometricBounds(object), tolerance), point);
   }
 }
 

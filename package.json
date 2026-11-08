@@ -17,6 +17,7 @@
     "format:check": "prettier --check .",
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test",
+    "test:e2e": "pnpm --filter @inkroom/web run test:e2e",
     "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test",
     "db:up": "docker compose up -d --wait postgres",
     "db:down": "docker compose down",

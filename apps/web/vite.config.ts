@@ -1,5 +1,5 @@
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   plugins: [react()],
@@ -13,5 +13,7 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    // Browser specs run under Playwright (pnpm test:e2e), not under Vitest.
+    exclude: [...configDefaults.exclude, 'e2e/**'],
   },
 });

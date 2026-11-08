@@ -11,3 +11,5 @@ coverage/
 .env
 .env.local
 .vite/
+playwright-report/
+test-results/

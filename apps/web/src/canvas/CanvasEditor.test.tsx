@@ -172,3 +172,90 @@ describe('CanvasEditor pointer and wheel input', () => {
     expect(lastSceneProps().viewport).toEqual({ scale: 1, offsetX: 0, offsetY: -40 });
   });
 });
+
+describe('CanvasEditor editing commands', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const statusText = () => screen.getByRole('status', { name: 'Canvas status' }).textContent;
+
+  function drawRectangle(surface: Element) {
+    fireEvent.click(screen.getByRole('button', { name: 'Rectangle' }));
+    sendPointer(surface, 'pointerdown', 100, 100);
+    sendPointer(surface, 'pointermove', 160, 140);
+    sendPointer(surface, 'pointerup', 160, 140);
+  }
+
+  it('disables undo and redo until there is something to undo', () => {
+    render(<CanvasEditor />);
+
+    expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect((screen.getByRole('button', { name: 'Redo' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it('reports the drawn object and its size in the status line', () => {
+    render(<CanvasEditor />);
+    drawRectangle(screen.getByRole('application', { name: 'Whiteboard canvas' }));
+
+    expect(statusText()).toBe('1 object · 1 selected · 60 × 40 at 100, 100');
+  });
+
+  it('undoes and redoes with Ctrl+Z and Ctrl+Shift+Z', () => {
+    render(<CanvasEditor />);
+    drawRectangle(screen.getByRole('application', { name: 'Whiteboard canvas' }));
+
+    fireEvent.keyDown(window, { key: 'z', code: 'KeyZ', ctrlKey: true });
+    expect(statusText()).toBe('0 objects');
+
+    fireEvent.keyDown(window, { key: 'Z', code: 'KeyZ', ctrlKey: true, shiftKey: true });
+    expect(statusText()).toBe('1 object');
+  });
+
+  it('undoes from the toolbar button', () => {
+    render(<CanvasEditor />);
+    drawRectangle(screen.getByRole('application', { name: 'Whiteboard canvas' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+
+    expect(statusText()).toBe('0 objects');
+    expect((screen.getByRole('button', { name: 'Redo' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it('nudges the selection with arrow keys, and ten times as far with Shift', () => {
+    render(<CanvasEditor />);
+    drawRectangle(screen.getByRole('application', { name: 'Whiteboard canvas' }));
+
+    fireEvent.keyDown(window, { key: 'ArrowRight', code: 'ArrowRight' });
+    expect(statusText()).toContain('at 101, 100');
+
+    fireEvent.keyDown(window, { key: 'ArrowDown', code: 'ArrowDown', shiftKey: true });
+    expect(statusText()).toContain('at 101, 110');
+  });
+
+  it('duplicates the selection with Ctrl+D', () => {
+    render(<CanvasEditor />);
+    drawRectangle(screen.getByRole('application', { name: 'Whiteboard canvas' }));
+
+    fireEvent.keyDown(window, { key: 'd', code: 'KeyD', ctrlKey: true });
+
+    expect(statusText()).toBe('2 objects · 1 selected · 60 × 40 at 120, 120');
+  });
+
+  it('selects everything with Ctrl+A', () => {
+    render(<CanvasEditor />);
+    const surface = screen.getByRole('application', { name: 'Whiteboard canvas' });
+    drawRectangle(surface);
+    fireEvent.keyDown(window, { key: 'd', code: 'KeyD', ctrlKey: true });
+
+    fireEvent.keyDown(window, { key: 'a', code: 'KeyA', ctrlKey: true });
+
+    expect(statusText()).toBe('2 objects · 2 selected · 80 × 60 at 100, 100');
+  });
+});

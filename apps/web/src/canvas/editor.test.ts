@@ -1,15 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_TEXT_LENGTH, type CanvasObject, type Point } from '@inkroom/shared';
 import {
+  PASTE_OFFSET,
   createEditorState,
   editorReducer,
   type EditorAction,
   type EditorState,
 } from './editor';
+import { MAX_HISTORY } from './history';
 import { screenToWorld, worldToScreen, type Viewport } from './viewport';
 
 const style = { stroke: '#1f2328', strokeWidth: 2 };
 const idOf = (value: string) => `00000000-0000-4000-8000-00000000000${value}`;
+const uniqueId = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 function run(state: EditorState, ...actions: EditorAction[]): EditorState {
   return actions.reduce(editorReducer, state);
@@ -28,6 +31,10 @@ const press = (screen: Point, id = idOf('a'), shift = false): EditorAction => ({
 });
 const move = (screen: Point): EditorAction => ({ type: 'pointerMove', screen });
 const release: EditorAction = { type: 'pointerUp' };
+const select = (screen: Point, shift = false): EditorAction[] => [
+  press(screen, idOf('s'), shift),
+  release,
+];
 
 const rectangle = (
   id: string,
@@ -44,6 +51,10 @@ const rectangle = (
   height,
   ...style,
 });
+
+function idsOf(state: EditorState): string[] {
+  return state.objects.map((object) => object.id);
+}
 
 describe('drawing tools', () => {
   it('draws a pen stroke whose points are stored in world units at zoom 2', () => {
@@ -237,21 +248,6 @@ describe('selection and movement', () => {
     expect(run(state, release).marquee).toBeNull();
   });
 
-  it('deletes the selected objects', () => {
-    const state = run(
-      withView({ scale: 1, offsetX: 0, offsetY: 0 }, [
-        rectangle('1', 0, 0, 50, 50),
-        rectangle('2', 100, 0, 50, 50),
-      ]),
-      press({ x: 0, y: 10 }),
-      release,
-      { type: 'deleteSelected' },
-    );
-
-    expect(state.objects.map((object) => object.id)).toEqual([idOf('2')]);
-    expect(state.selectedIds).toEqual([]);
-  });
-
   it('clears the selection when the tool changes', () => {
     const state = run(
       withView({ scale: 1, offsetX: 0, offsetY: 0 }, [rectangle('1', 0, 0, 50, 50)]),
@@ -382,10 +378,10 @@ describe('text objects', () => {
       fontSize: 24,
       ...style,
     };
-    const state = run(
-      withView({ scale: 1, offsetX: 0, offsetY: 0 }, [text]),
-      { type: 'doubleClick', screen: { x: 35, y: 45 } },
-    );
+    const state = run(withView({ scale: 1, offsetX: 0, offsetY: 0 }, [text]), {
+      type: 'doubleClick',
+      screen: { x: 35, y: 45 },
+    });
 
     expect(state.editingTextId).toBe(idOf('t'));
     expect(state.selectedIds).toEqual([idOf('t')]);
@@ -412,5 +408,383 @@ describe('text objects', () => {
 
     expect(state.editingTextId).toBeNull();
     expect(state.objects).toEqual([]);
+  });
+});
+
+describe('resizing and grouped transformations', () => {
+  it('records a drag as one undo step, and undo and redo move it back and forth', () => {
+    const moved = run(
+      withView({ scale: 1, offsetX: 0, offsetY: 0 }, [rectangle('1', 0, 0, 100, 100)]),
+      press({ x: 0, y: 50 }),
+      move({ x: 40, y: 50 }),
+      release,
+    );
+    expect(moved.objects[0]?.x).toBe(40);
+    expect(moved.history.past).toHaveLength(1);
+
+    const undone = run(moved, { type: 'undo' });
+    expect(undone.objects[0]?.x).toBe(0);
+    expect(undone.history.past).toHaveLength(0);
+
+    const redone = run(undone, { type: 'redo' });
+    expect(redone.objects[0]?.x).toBe(40);
+  });
+
+  it('records nothing for a click that moves nothing', () => {
+    const state = run(
+      withView({ scale: 1, offsetX: 0, offsetY: 0 }, [rectangle('1', 0, 0, 100, 100)]),
+      press({ x: 0, y: 50 }),
+      release,
+    );
+
+    expect(state.history.past).toHaveLength(0);
+  });
+
+  it('resizes a selection from its bottom-right handle', () => {
+    const state = run(
+      withView({ scale: 1, offsetX: 0, offsetY: 0 }, [rectangle('1', 0, 0, 100, 100)]),
+      ...select({ x: 0, y: 50 }),
+      press({ x: 100, y: 100 }),
+      move({ x: 150, y: 140 }),
+      release,
+    );
+
+    expect(state.objects[0]).toMatchObject({ x: 0, y: 0, width: 150, height: 140 });
+    expect(state.history.past).toHaveLength(1);
+    expect(run(state, { type: 'undo' }).objects[0]).toMatchObject({ width: 100, height: 100 });
+  });
+
+  it('resizes from the left edge and keeps the right edge fixed', () => {
+    const state = run(
+      withView({ scale: 1, offsetX: 0, offsetY: 0 }, [rectangle('1', 0, 0, 100, 100)]),
+      ...select({ x: 0, y: 50 }),
+      press({ x: 0, y: 50 }),
+      move({ x: -50, y: 50 }),
+      release,
+    );
+
+    expect(state.objects[0]).toMatchObject({ x: -50, width: 150 });
+  });
+
+  it('clamps a resize to the minimum size instead of inverting the object', () => {
+    const state = run(
+      withView({ scale: 1, offsetX: 0, offsetY: 0 }, [rectangle('1', 0, 0, 100, 100)]),
+      ...select({ x: 0, y: 50 }),
+      press({ x: 100, y: 50 }),
+      move({ x: -100, y: 50 }),
+      release,
+    );
+
+    expect(state.objects[0]).toMatchObject({ x: 0, width: 1 });
+  });
+
+  it('resizes a selection of two objects as one group', () => {
+    const state = run(
+      withView({ scale: 1, offsetX: 0, offsetY: 0 }, [
+        rectangle('1', 0, 0, 100, 50),
+        rectangle('2', 100, 0, 100, 50),
+      ]),
+      press({ x: -10, y: -10 }),
+      move({ x: 210, y: 60 }),
+      release,
+      press({ x: 200, y: 25 }),
+      move({ x: 300, y: 25 }),
+      release,
+    );
+
+    expect(state.objects[0]).toMatchObject({ x: 0, width: 150, height: 50 });
+    expect(state.objects[1]).toMatchObject({ x: 150, width: 150, height: 50 });
+  });
+
+  it('moves a selection of two objects together, and one undo restores both', () => {
+    const start = withView({ scale: 1, offsetX: 0, offsetY: 0 }, [
+      rectangle('1', 0, 0, 100, 50),
+      rectangle('2', 100, 0, 100, 50),
+    ]);
+    const moved = run(
+      start,
+      press({ x: -10, y: -10 }),
+      move({ x: 210, y: 60 }),
+      release,
+      press({ x: 50, y: 0 }),
+      move({ x: 80, y: 0 }),
+      release,
+    );
+
+    expect(moved.objects.map((object) => object.x)).toEqual([30, 130]);
+    expect(run(moved, { type: 'undo' }).objects.map((object) => object.x)).toEqual([0, 100]);
+  });
+
+  it('cancelling a drag reverts the preview and records nothing', () => {
+    const cancelled = run(
+      withView({ scale: 1, offsetX: 0, offsetY: 0 }, [rectangle('1', 0, 0, 100, 100)]),
+      press({ x: 0, y: 50 }),
+      move({ x: 40, y: 50 }),
+      { type: 'pointerCancel' },
+    );
+
+    expect(cancelled.objects[0]?.x).toBe(0);
+    expect(cancelled.history.past).toHaveLength(0);
+  });
+
+  it('undo during a drag cancels the drag first and leaves history alone', () => {
+    const committed = run(
+      withView({ scale: 1, offsetX: 0, offsetY: 0 }, [rectangle('1', 0, 0, 100, 100)]),
+      press({ x: 0, y: 50 }),
+      move({ x: 20, y: 50 }),
+      release,
+      press({ x: 20, y: 50 }),
+      move({ x: 60, y: 50 }),
+    );
+
+    const afterUndo = run(committed, { type: 'undo' });
+    expect(afterUndo.objects[0]?.x).toBe(20);
+    expect(afterUndo.history.past).toHaveLength(1);
+    expect(afterUndo.gesture).toBeNull();
+
+    expect(run(afterUndo, release, { type: 'undo' }).objects[0]?.x).toBe(0);
+  });
+});
+
+describe('deletion, copy, paste and duplicate', () => {
+  it('deletes the selection, and undo restores it at its original position in the stack', () => {
+    const start = withView({ scale: 1, offsetX: 0, offsetY: 0 }, [
+      rectangle('1', 0, 0, 50, 50),
+      rectangle('2', 100, 0, 50, 50),
+      rectangle('3', 200, 0, 50, 50),
+    ]);
+    const deleted = run(start, ...select({ x: 100, y: 10 }), { type: 'deleteSelected' });
+
+    expect(idsOf(deleted)).toEqual([idOf('1'), idOf('3')]);
+    expect(idsOf(run(deleted, { type: 'undo' }))).toEqual([idOf('1'), idOf('2'), idOf('3')]);
+  });
+
+  it('copies and pastes with a growing offset, and each paste is its own undo step', () => {
+    let counter = 0;
+    const makeId = () => uniqueId(++counter);
+    const start = withView({ scale: 1, offsetX: 0, offsetY: 0 }, [rectangle('1', 0, 0, 50, 50)]);
+
+    const pasted = run(
+      start,
+      ...select({ x: 0, y: 10 }),
+      { type: 'copy' },
+      { type: 'paste', makeId },
+      { type: 'paste', makeId },
+    );
+
+    expect(pasted.objects).toHaveLength(3);
+    expect(pasted.objects[1]).toMatchObject({ x: PASTE_OFFSET, y: PASTE_OFFSET });
+    expect(pasted.objects[2]).toMatchObject({ x: PASTE_OFFSET * 2, y: PASTE_OFFSET * 2 });
+    expect(pasted.selectedIds).toEqual([uniqueId(2)]);
+    expect(new Set(pasted.objects.map((object) => object.id)).size).toBe(3);
+
+    const undone = run(pasted, { type: 'undo' });
+    expect(undone.objects).toHaveLength(2);
+  });
+
+  it('duplicates the selection in place, offset, and leaves the clipboard unchanged', () => {
+    let counter = 0;
+    const makeId = () => uniqueId(++counter);
+    const duplicated = run(
+      withView({ scale: 1, offsetX: 0, offsetY: 0 }, [rectangle('1', 0, 0, 50, 50)]),
+      ...select({ x: 0, y: 10 }),
+      { type: 'duplicate', makeId },
+    );
+
+    expect(duplicated.objects[1]).toMatchObject({ x: PASTE_OFFSET, y: PASTE_OFFSET });
+    expect(duplicated.selectedIds).toEqual([uniqueId(1)]);
+    expect(duplicated.clipboard).toBeNull();
+  });
+
+  it('cut removes the selection and keeps it on the clipboard for pasting', () => {
+    let counter = 0;
+    const makeId = () => uniqueId(++counter);
+    const cut = run(
+      withView({ scale: 1, offsetX: 0, offsetY: 0 }, [rectangle('1', 0, 0, 50, 50)]),
+      ...select({ x: 0, y: 10 }),
+      { type: 'cut' },
+    );
+
+    expect(cut.objects).toHaveLength(0);
+    const pasted = run(cut, { type: 'paste', makeId });
+    expect(pasted.objects).toHaveLength(1);
+    expect(pasted.objects[0]).toMatchObject({ x: PASTE_OFFSET, y: PASTE_OFFSET });
+  });
+
+  it('pastes nothing when the clipboard is empty', () => {
+    const state = withView({ scale: 1, offsetX: 0, offsetY: 0 }, [rectangle('1', 0, 0, 50, 50)]);
+    expect(run(state, { type: 'paste', makeId: () => uniqueId(1) })).toEqual(state);
+  });
+});
+
+describe('layer ordering', () => {
+  const row = () =>
+    withView({ scale: 1, offsetX: 0, offsetY: 0 }, [
+      rectangle('a', 0, 0, 50, 50),
+      rectangle('b', 100, 0, 50, 50),
+      rectangle('c', 200, 0, 50, 50),
+    ]);
+
+  it('moves the selection to the front and back', () => {
+    const front = run(row(), ...select({ x: 0, y: 10 }), {
+      type: 'reorder',
+      direction: 'front',
+    });
+    expect(idsOf(front)).toEqual([idOf('b'), idOf('c'), idOf('a')]);
+
+    const back = run(front, { type: 'reorder', direction: 'back' });
+    expect(idsOf(back)).toEqual([idOf('a'), idOf('b'), idOf('c')]);
+  });
+
+  it('steps the selection forward and backward past its neighbours', () => {
+    const forward = run(row(), ...select({ x: 0, y: 10 }), {
+      type: 'reorder',
+      direction: 'forward',
+    });
+    expect(idsOf(forward)).toEqual([idOf('b'), idOf('a'), idOf('c')]);
+
+    const backward = run(forward, ...select({ x: 200, y: 10 }), {
+      type: 'reorder',
+      direction: 'backward',
+    });
+    expect(idsOf(backward)).toEqual([idOf('b'), idOf('c'), idOf('a')]);
+  });
+
+  it('keeps a selected run together when moving forward', () => {
+    const forward = run(
+      row(),
+      press({ x: 0, y: 10 }, idOf('s')),
+      release,
+      press({ x: 100, y: 10 }, idOf('s'), true),
+      release,
+      { type: 'reorder', direction: 'forward' },
+    );
+
+    expect(idsOf(forward)).toEqual([idOf('c'), idOf('a'), idOf('b')]);
+  });
+
+  it('records layer changes as undoable steps', () => {
+    const front = run(row(), ...select({ x: 0, y: 10 }), {
+      type: 'reorder',
+      direction: 'front',
+    });
+    expect(idsOf(run(front, { type: 'undo' }))).toEqual([idOf('a'), idOf('b'), idOf('c')]);
+  });
+});
+
+describe('nudging and selecting everything', () => {
+  it('nudges the selection in world units and undoes each nudge', () => {
+    const state = run(
+      withView({ scale: 2, offsetX: 0, offsetY: 0 }, [rectangle('1', 0, 0, 50, 50)]),
+      ...select({ x: 0, y: 20 }),
+      { type: 'nudge', dx: 1, dy: 0 },
+      { type: 'nudge', dx: 10, dy: 0 },
+    );
+
+    expect(state.objects[0]).toMatchObject({ x: 11, y: 0 });
+    expect(run(state, { type: 'undo' }).objects[0]).toMatchObject({ x: 1 });
+  });
+
+  it('selects every object with select all', () => {
+    const state = run(
+      withView({ scale: 1, offsetX: 0, offsetY: 0 }, [
+        rectangle('1', 0, 0, 50, 50),
+        rectangle('2', 100, 0, 50, 50),
+      ]),
+      { type: 'selectAll' },
+    );
+
+    expect(state.selectedIds).toEqual([idOf('1'), idOf('2')]);
+  });
+});
+
+describe('text and freehand alongside transformations', () => {
+  it('keeps a text session and a later move as separate undo steps', () => {
+    const text = run(
+      withView({ scale: 1, offsetX: 0, offsetY: 0 }),
+      { type: 'setTool', tool: 'text' },
+      press({ x: 0, y: 0 }, idOf('t')),
+      { type: 'changeText', id: idOf('t'), text: 'Hi' },
+      { type: 'finishText' },
+    );
+    expect(text.history.past).toHaveLength(1);
+
+    const moved = run(
+      text,
+      { type: 'setTool', tool: 'select' },
+      press({ x: 5, y: 5 }),
+      move({ x: 25, y: 5 }),
+      release,
+    );
+    expect(moved.objects[0]).toMatchObject({ x: 20, y: 0, text: 'Hi' });
+    expect(moved.history.past).toHaveLength(2);
+
+    const undoneMove = run(moved, { type: 'undo' });
+    expect(undoneMove.objects[0]).toMatchObject({ x: 0, text: 'Hi' });
+
+    const undoneText = run(undoneMove, { type: 'undo' });
+    expect(undoneText.objects).toEqual([]);
+    expect(run(undoneText, { type: 'redo' }, { type: 'redo' }).objects[0]).toMatchObject({
+      x: 20,
+      text: 'Hi',
+    });
+  });
+
+  it('records an edit to existing text as one step, including undo of the text change', () => {
+    const existing: CanvasObject = {
+      id: idOf('t'),
+      type: 'text',
+      x: 30,
+      y: 40,
+      text: 'Notes',
+      fontSize: 24,
+      ...style,
+    };
+    const edited = run(
+      withView({ scale: 1, offsetX: 0, offsetY: 0 }, [existing]),
+      { type: 'doubleClick', screen: { x: 35, y: 45 } },
+      { type: 'changeText', id: idOf('t'), text: 'Notes 2' },
+      { type: 'changeText', id: idOf('t'), text: 'Notes 22' },
+      { type: 'finishText' },
+    );
+
+    expect(edited.history.past).toHaveLength(1);
+    expect(run(edited, { type: 'undo' }).objects[0]).toMatchObject({ text: 'Notes' });
+  });
+
+  it('keeps a freehand stroke separate from earlier transformations', () => {
+    const drawn = run(
+      withView({ scale: 1, offsetX: 0, offsetY: 0 }, [rectangle('1', 0, 0, 100, 100)]),
+      ...select({ x: 0, y: 50 }),
+      press({ x: 0, y: 25 }),
+      move({ x: 30, y: 25 }),
+      release,
+      { type: 'setTool', tool: 'pen' },
+      press({ x: 300, y: 300 }, idOf('p')),
+      move({ x: 320, y: 320 }),
+      move({ x: 340, y: 340 }),
+      release,
+    );
+
+    expect(drawn.objects).toHaveLength(2);
+    expect(drawn.objects[1]).toMatchObject({ type: 'pen' });
+    expect(drawn.history.past).toHaveLength(2);
+
+    const withoutPen = run(drawn, { type: 'undo' });
+    expect(withoutPen.objects).toHaveLength(1);
+    expect(withoutPen.objects[0]).toMatchObject({ x: 30 });
+  });
+});
+
+describe('history limits', () => {
+  it('keeps at most MAX_HISTORY steps', () => {
+    const start = withView({ scale: 1, offsetX: 0, offsetY: 0 }, [rectangle('1', 0, 0, 50, 50)]);
+    let state = run(start, { type: 'selectAll' });
+    for (let step = 0; step < MAX_HISTORY + 5; step += 1) {
+      state = run(state, { type: 'nudge', dx: 1, dy: 0 });
+    }
+
+    expect(state.history.past).toHaveLength(MAX_HISTORY);
+    expect(state.objects[0]?.x).toBe(MAX_HISTORY + 5);
   });
 });

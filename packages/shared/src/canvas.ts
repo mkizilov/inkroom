@@ -9,9 +9,9 @@ export const MAX_TEXT_LENGTH = 5_000;
 
 const COORDINATE_LIMIT = 1e7;
 
-const coordinate = z.number().finite().min(-COORDINATE_LIMIT).max(COORDINATE_LIMIT);
-const extent = z.number().finite().min(0).max(COORDINATE_LIMIT);
-const colorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Use a 6-digit hex color.');
+export const coordinate = z.number().finite().min(-COORDINATE_LIMIT).max(COORDINATE_LIMIT);
+export const extent = z.number().finite().min(0).max(COORDINATE_LIMIT);
+export const colorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Use a 6-digit hex color.');
 
 export const pointSchema = z.object({
   x: coordinate,
