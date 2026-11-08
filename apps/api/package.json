@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/server.ts",
-    "build": "tsup src/server.ts --format esm --platform node --target node22 --clean",
+    "build": "tsup",
     "start": "node dist/server.js",
+    "migrate": "node dist/migrate.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",

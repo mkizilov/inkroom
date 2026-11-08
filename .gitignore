@@ -9,7 +9,9 @@ dist/
 coverage/
 *.log
 .env
-.env.local
+.env.*
+!.env.example
+!.env.production.example
 .vite/
 playwright-report/
 test-results/

@@ -3,7 +3,8 @@ import type { AuthUser } from '@inkroom/shared';
 import type { WebSocket } from 'ws';
 import type { DbExecutor } from '../db/client';
 import { requestSessionToken } from '../auth/middleware';
-import { resolveSession } from '../auth/service';
+import { resolveSessionHash } from '../auth/service';
+import { hashSessionToken } from '../auth/session-token';
 import { CLOSE_POLICY_VIOLATION, type SocketLike, type SyncConnection } from './connections';
 import type { SyncService } from './service';
 
@@ -37,11 +38,12 @@ function adapt(socket: WebSocket): SocketLike {
 
 // Authentication happens during the upgrade, before any board is opened. The browser sends its
 // session cookie with the upgrade request, and the Origin check is the same rule the HTTP write
-// routes use, which blocks cross-site WebSocket hijacking.
+// routes use, which blocks cross-site WebSocket hijacking. The session is checked again later by the
+// sync service, using the hash returned here.
 async function authenticate(
   request: FastifyRequest,
   options: SyncRouteOptions,
-): Promise<AuthUser | null> {
+): Promise<{ user: AuthUser; sessionHash: string } | null> {
   if (request.headers.origin !== options.webOrigin) {
     return null;
   }
@@ -49,8 +51,9 @@ async function authenticate(
   if (!token) {
     return null;
   }
-  const session = await resolveSession(options.db, token);
-  return session.status === 'active' ? session.user : null;
+  const sessionHash = hashSessionToken(token);
+  const session = await resolveSessionHash(options.db, sessionHash);
+  return session.status === 'active' ? { user: session.user, sessionHash } : null;
 }
 
 type RawMessage = { data: Buffer | ArrayBuffer | Buffer[]; isBinary: boolean };
@@ -80,14 +83,15 @@ export function registerSyncRoutes(app: FastifyInstance, options: SyncRouteOptio
       });
       socket.on('error', () => connection?.markClosed());
 
-      const user = await authenticate(request, options);
-      if (!user) {
+      const auth = await authenticate(request, options);
+      if (!auth) {
         socket.close(CLOSE_POLICY_VIOLATION, 'not signed in');
         return;
       }
 
       const result = await options.service.open({
-        user,
+        user: auth.user,
+        sessionHash: auth.sessionHash,
         boardId: request.params.boardId,
         socket: adapt(socket),
       });

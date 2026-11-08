@@ -41,7 +41,7 @@ export function RegisterPage() {
   }
 
   return (
-    <main>
+    <main id="main-content" tabIndex={-1}>
       <h1>Create account</h1>
       <form onSubmit={handleSubmit} noValidate>
         <TextField

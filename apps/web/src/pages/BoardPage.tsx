@@ -75,7 +75,7 @@ export function BoardPage() {
   }, [boardId, store, userId]);
 
   return (
-    <main>
+    <main id="main-content" tabIndex={-1}>
       <p>
         <Link to="/">Back to boards</Link>
       </p>
@@ -84,6 +84,11 @@ export function BoardPage() {
         <div role="alert" className="panel">
           <p>Could not open this board.</p>
           <p>{state.message}</p>
+          <p>
+            <button type="button" onClick={() => window.location.reload()}>
+              Try again
+            </button>
+          </p>
         </div>
       )}
       {state.kind === 'loaded' && (

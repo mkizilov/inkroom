@@ -14,25 +14,9 @@ concurrency:
 
 jobs:
   verify:
-    name: Lint, typecheck, test, build
+    name: Lint, format, typecheck, unit tests, build
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: inkroom
-          POSTGRES_PASSWORD: inkroom
-          POSTGRES_DB: inkroom
-        ports:
-          - 21432:5432
-        options: >-
-          --health-cmd "pg_isready -U inkroom -d inkroom"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-    env:
-      TEST_DATABASE_URL: postgres://inkroom:inkroom@127.0.0.1:21432/inkroom
     steps:
       - uses: actions/checkout@v4
 
@@ -54,6 +38,96 @@ jobs:
       - run: pnpm test
 
       - run: pnpm build
+
+  integration:
+    name: API integration tests (PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: inkroom
+          POSTGRES_PASSWORD: inkroom
+          POSTGRES_DB: inkroom
+        ports:
+          - 21432:5432
+        options: >-
+          --health-cmd "pg_isready -U inkroom -d inkroom"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://inkroom:inkroom@127.0.0.1:21432/inkroom
+      # A missing database fails the run instead of skipping the integration tests.
+      REQUIRE_TEST_DATABASE: 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm --filter @inkroom/api exec vitest run integration
+
+  production-build:
+    name: Production bundles, migrations and readiness
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: inkroom
+          POSTGRES_PASSWORD: inkroom
+          POSTGRES_DB: inkroom
+        ports:
+          - 21432:5432
+        options: >-
+          --health-cmd "pg_isready -U inkroom -d inkroom"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://inkroom:inkroom@127.0.0.1:21432/inkroom
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Apply migrations twice (the second run must change nothing)
+        run: |
+          node apps/api/dist/migrate.js
+          node apps/api/dist/migrate.js
+
+      - name: The built server reports ready
+        run: |
+          node apps/api/dist/server.js &
+          pid=$!
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:21080/api/ready; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          kill "$pid"
+          test "$ready" = 1
 
   e2e:
     name: Browser tests (Playwright)
@@ -102,3 +176,21 @@ jobs:
           name: playwright-results
           path: apps/web/test-results/
           if-no-files-found: ignore
+
+  images:
+    name: Production compose file and images
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The production compose file is valid
+        run: |
+          cp .env.production.example .env.production
+          docker compose -f docker-compose.prod.yml --env-file .env.production config --quiet
+
+      - name: The API image builds
+        run: docker build -f apps/api/Dockerfile -t inkroom-api:ci .
+
+      - name: The web image builds
+        run: docker build -f apps/web/Dockerfile -t inkroom-web:ci .

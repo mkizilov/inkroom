@@ -51,8 +51,17 @@ export async function issueSession(db: DbExecutor, userId: string): Promise<stri
   return token;
 }
 
-export async function resolveSession(db: DbExecutor, token: string): Promise<SessionResolution> {
-  const row = await findSessionWithUserByTokenHash(db, hashSessionToken(token));
+export function resolveSession(db: DbExecutor, token: string): Promise<SessionResolution> {
+  return resolveSessionHash(db, hashSessionToken(token));
+}
+
+// Checks a session by the hash the database stores. Open sockets keep only this hash, so they can be
+// re-checked without holding the raw token.
+export async function resolveSessionHash(
+  db: DbExecutor,
+  tokenHash: string,
+): Promise<SessionResolution> {
+  const row = await findSessionWithUserByTokenHash(db, tokenHash);
   if (!row) {
     return { status: 'invalid' };
   }

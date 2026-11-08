@@ -35,6 +35,9 @@ export function AppRoutes() {
 export function App() {
   return (
     <BrowserRouter>
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
       <AuthProvider>
         <AppRoutes />
       </AuthProvider>

@@ -7,6 +7,7 @@ import { parseBody } from '../http/validation';
 import { sessionClearCookie, sessionSetCookie } from './cookies';
 import { currentUserOf, requestSessionToken } from './middleware';
 import { type FailureLimiter } from './rate-limit';
+import { hashSessionToken } from './session-token';
 import {
   authenticateUser,
   issueSession,
@@ -20,10 +21,12 @@ export interface AuthRouteOptions {
   cookieSecure: boolean;
   requireUser: (request: FastifyRequest) => Promise<void>;
   limits: { byEmail: FailureLimiter; byIp: FailureLimiter };
+  // Told when a session is signed out, so the sockets opened with it close at once.
+  onSignOut?: (sessionHash: string) => void;
 }
 
 export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptions): void {
-  const { db, cookieSecure, requireUser, limits } = options;
+  const { db, cookieSecure, requireUser, limits, onSignOut } = options;
   app.decorateRequest('currentUser', null);
 
   const setSessionCookie = (token: string) => sessionSetCookie(token, cookieSecure);
@@ -74,6 +77,7 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
     const token = requestSessionToken(request, cookieSecure);
     if (token) {
       await revokeSession(db, token);
+      onSignOut?.(hashSessionToken(token));
     }
     reply.header('Set-Cookie', sessionClearCookie(cookieSecure));
     return reply.code(204).send();

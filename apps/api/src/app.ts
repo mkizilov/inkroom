@@ -9,6 +9,7 @@ import { registerImportRoutes } from './boards/import';
 import { registerMemberRoutes } from './boards/member-routes';
 import { registerRevisionRoutes } from './boards/revisions';
 import type { Database } from './db/client';
+import { appliedMigrationCount, expectedMigrationCount } from './db/migrations';
 import { registerErrorHandlers } from './http/errors';
 import { requireTrustedOrigin } from './http/origin';
 import { PostgresBoardStore } from './persistence/store';
@@ -18,6 +19,9 @@ import { SyncService } from './sync/service';
 import { DEFAULT_ROOM_LIMITS, type RoomLimits } from './sync/room';
 
 export const DEFAULT_WEB_ORIGIN = 'http://127.0.0.1:21173';
+
+// Request headers that carry credentials. They are censored in request logs.
+const REDACTED_LOG_PATHS = ['req.headers.cookie', 'req.headers.authorization'];
 
 export interface LoginRateLimits {
   maxFailuresPerEmail: number;
@@ -34,8 +38,13 @@ export const DEFAULT_LOGIN_RATE_LIMITS: LoginRateLimits = {
 export interface BuildAppOptions {
   database: Database;
   logger?: boolean;
+  logLevel?: string;
+  // Reverse proxies whose X-Forwarded-For sets the client address. Empty means the socket address is used.
+  trustProxy?: string[];
   webOrigin?: string;
   cookieSecure?: boolean;
+  // The schema Drizzle records applied migrations in. Readiness checks that they are all applied.
+  migrationsSchema?: string;
   loginRateLimits?: Partial<LoginRateLimits>;
   roomLimits?: Partial<RoomLimits>;
   connectionLimits?: Partial<ConnectionLimits>;
@@ -43,9 +52,9 @@ export interface BuildAppOptions {
   compactEvery?: number;
   sweepThreshold?: number;
   sweepIntervalMs?: number;
-  // Interval for re-reading open connections' memberships. Zero disables it.
+  // Interval for re-checking open connections' memberships and sessions. Zero disables it.
   membershipCheckMs?: number;
-  // Starts the heartbeat, the compaction sweep and the membership check. Tests turn these off and
+  // Starts the heartbeat, the compaction sweep and the access check. Tests turn these off and
   // drive them directly.
   startHeartbeat?: boolean;
 }
@@ -60,8 +69,11 @@ export async function buildApp(options: BuildAppOptions): Promise<InkRoomApp> {
   const {
     database,
     logger = false,
+    logLevel = 'info',
+    trustProxy = [],
     webOrigin = DEFAULT_WEB_ORIGIN,
     cookieSecure = false,
+    migrationsSchema = 'drizzle',
     loginRateLimits,
     roomLimits,
     connectionLimits,
@@ -72,7 +84,13 @@ export async function buildApp(options: BuildAppOptions): Promise<InkRoomApp> {
     startHeartbeat = true,
   } = options;
   const limits = { ...DEFAULT_LOGIN_RATE_LIMITS, ...loginRateLimits };
-  const app = Fastify({ logger });
+  const app = Fastify({
+    trustProxy: trustProxy.length > 0 ? trustProxy : false,
+    logger: logger
+      ? { level: logLevel, redact: { paths: REDACTED_LOG_PATHS, censor: '[redacted]' } }
+      : false,
+  });
+  const expectedMigrations = expectedMigrationCount();
 
   registerErrorHandlers(app);
   app.addHook('onRequest', requireTrustedOrigin(webOrigin));
@@ -97,7 +115,43 @@ export async function buildApp(options: BuildAppOptions): Promise<InkRoomApp> {
     return reply.code(healthy ? 200 : 503).send(body);
   });
 
+  // Readiness is stricter than health: the process can take traffic only when the database answers
+  // and every migration the code ships with has been applied. Deployments wait on this.
+  app.get('/api/ready', async (request, reply) => {
+    try {
+      await database.ping();
+    } catch (error) {
+      request.log.warn({ err: error }, 'readiness: database unreachable');
+      return reply.code(503).send({ status: 'not_ready', reason: 'database_unreachable' });
+    }
+    let applied: number;
+    try {
+      applied = await appliedMigrationCount(database.db, migrationsSchema);
+    } catch (error) {
+      request.log.warn({ err: error }, 'readiness: migration table unavailable');
+      return reply.code(503).send({ status: 'not_ready', reason: 'migrations_unavailable' });
+    }
+    if (applied < expectedMigrations) {
+      return reply.code(503).send({ status: 'not_ready', reason: 'migrations_pending' });
+    }
+    return { status: 'ready' };
+  });
+
   const requireUser = createRequireUser(database.db, cookieSecure);
+  const store = new PostgresBoardStore(database.db, (boardId, seq, error) => {
+    app.log.warn({ err: error, boardId, seq }, 'skipped an unreadable stored update');
+  });
+  const sync = new SyncService({
+    db: database.db,
+    store,
+    roomLimits,
+    connectionLimits: { ...DEFAULT_CONNECTION_LIMITS, ...connectionLimits },
+    compactEvery,
+    sweepThreshold,
+    sweepIntervalMs,
+    membershipCheckMs,
+    logger: app.log,
+  });
 
   registerAuthRoutes(app, {
     db: database.db,
@@ -113,21 +167,7 @@ export async function buildApp(options: BuildAppOptions): Promise<InkRoomApp> {
         windowMs: limits.windowMs,
       }),
     },
-  });
-
-  const store = new PostgresBoardStore(database.db, (boardId, seq, error) => {
-    app.log.warn({ err: error, boardId, seq }, 'skipped an unreadable stored update');
-  });
-  const sync = new SyncService({
-    db: database.db,
-    store,
-    roomLimits,
-    connectionLimits: { ...DEFAULT_CONNECTION_LIMITS, ...connectionLimits },
-    compactEvery,
-    sweepThreshold,
-    sweepIntervalMs,
-    membershipCheckMs,
-    logger: app.log,
+    onSignOut: (sessionHash) => sync.endSession(sessionHash),
   });
 
   registerBoardRoutes(app, { db: database.db, requireUser, sync });

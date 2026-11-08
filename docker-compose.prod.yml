@@ -1,0 +1,89 @@
+# Production stack: PostgreSQL, a one-off migration job, the API and the web app.
+#
+#   cp .env.production.example .env.production   # then set every value
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build --wait
+#
+# Only the web container publishes a port, and only on loopback. Put a TLS-terminating reverse proxy
+# in front of it. The database and the API are reachable only on the internal network.
+
+name: inkroom
+
+x-api-environment: &api-environment
+  NODE_ENV: production
+  API_HOST: 0.0.0.0
+  API_PORT: 21080
+  DATABASE_URL: postgres://${POSTGRES_USER:?set POSTGRES_USER}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}
+  WEB_ORIGIN: ${WEB_ORIGIN:?set WEB_ORIGIN to the public https origin, for example https://inkroom.example.com}
+  COOKIE_SECURE: "true"
+  # The web container is the only proxy in front of the API. Its address is within this subnet.
+  TRUST_PROXY: 172.28.0.0/24
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - inkroom
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Applies pending migrations, then exits. The API starts only after this exits successfully.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: inkroom-api:${INKROOM_TAG:-local}
+    command: ["node", "dist/migrate.js"]
+    environment: *api-environment
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - inkroom
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: inkroom-api:${INKROOM_TAG:-local}
+    restart: unless-stopped
+    environment: *api-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - inkroom
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    image: inkroom-web:${INKROOM_TAG:-local}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${WEB_PORT:-21173}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - inkroom
+
+volumes:
+  postgres-data:
+
+networks:
+  inkroom:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24

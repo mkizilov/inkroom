@@ -40,7 +40,7 @@ export function LoginPage() {
   }
 
   return (
-    <main>
+    <main id="main-content" tabIndex={-1}>
       <h1>Sign in</h1>
       <form onSubmit={handleSubmit} noValidate>
         <TextField

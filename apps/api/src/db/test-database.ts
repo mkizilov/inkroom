@@ -7,8 +7,12 @@ import { describe } from 'vitest';
 import { createDatabase, type Database } from './client';
 import { sqlStateOf } from './errors';
 
-// Integration tests need TEST_DATABASE_URL (the Compose database or the CI service).
+// Integration tests need TEST_DATABASE_URL (the Compose database or the CI service). CI sets
+// REQUIRE_TEST_DATABASE, so a missing database fails the run instead of skipping the tests silently.
 export const testDatabaseUrl = process.env.TEST_DATABASE_URL;
+if (!testDatabaseUrl && process.env.REQUIRE_TEST_DATABASE === 'true') {
+  throw new Error('TEST_DATABASE_URL must be set when REQUIRE_TEST_DATABASE is true.');
+}
 export const describeWithDatabase = testDatabaseUrl ? describe : describe.skip;
 
 export interface TestDatabase extends Database {

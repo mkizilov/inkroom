@@ -8,6 +8,8 @@ async function main(): Promise<void> {
   const { app, sync } = await buildApp({
     database,
     logger: true,
+    logLevel: config.logLevel,
+    trustProxy: config.trustProxy,
     webOrigin: config.webOrigin,
     cookieSecure: config.cookieSecure,
   });

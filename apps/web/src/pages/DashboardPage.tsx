@@ -30,7 +30,7 @@ export function DashboardPage() {
   }
 
   return (
-    <main>
+    <main id="main-content" tabIndex={-1}>
       <header className="page-header">
         <div>
           <h1>Your boards</h1>

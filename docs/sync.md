@@ -65,9 +65,12 @@ UI. See the viewer-echo limit below.
 - **Removing a member** closes their connections with 1008 and the reason `access revoked`.
   **Deleting the board** closes every connection with the reason `board was deleted`. The browser
   stops rather than retrying on 1008.
-- A change made by **another process** is not pushed. Each open connection's role is re-read every
-  30 seconds (`membershipCheckMs` in `buildApp`, started with the heartbeat), so such a change takes
-  effect within that interval. Writes are checked against the database in the meantime.
+- A change made by **another process** is not pushed. Each open connection's role and session are
+  re-read every 30 seconds (`membershipCheckMs` in `buildApp`, started with the heartbeat), so such a
+  change takes effect within that interval. Writes are checked against the database in the meantime.
+  A session that was signed out elsewhere, revoked or expired closes its sockets at the next check.
+- **Signing out** closes the sockets of that session at once, in the process that handled the
+  sign-out. A sign-out handled by another process takes effect at the next check.
 
 ## Limits
 
@@ -138,8 +141,10 @@ on a new connection is the client's state vector.
   socket is open, so an unauthenticated client gets an open socket that is closed with 1008 before
   any board data is sent. Rejecting the upgrade itself would need a `verifyClient` hook.
 - **Changes made by another process take up to the check interval.** Changes made in this process
-  apply at once. A change made elsewhere reaches an open connection within the 30-second membership
-  check, and until then every write is still checked against the database.
+  apply at once. A change made elsewhere, including a session that ends, reaches an open connection
+  within the 30-second access check. Until then, writes are checked against the membership in the
+  database but not against the session, so a session that ended elsewhere can still write for up to
+  that interval.
 - **Viewer echo.** The canvas refuses a viewer's edits, so a viewer's copy changes only through a
   client that ignores the UI. The server drops such a write, so other users never see it, but that
   copy can differ from the board until it reloads.

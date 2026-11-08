@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ProtocolError, type AuthUser, type BoardRole } from '@inkroom/shared';
+import { resolveSessionHash } from '../auth/service';
 import type { DbExecutor } from '../db/client';
 import { getBoardRole } from '../db/repositories/boards';
 import { AuthorizationError, BoardNotFoundError, type BoardStore } from '../persistence/store';
@@ -18,6 +19,8 @@ import { DEFAULT_ROOM_LIMITS, type RoomLimits } from './room';
 
 export const REVOKED_REASON = 'access revoked';
 export const BOARD_DELETED_REASON = 'board was deleted';
+// Matches the reason the web client treats as a signed-out session.
+export const SESSION_ENDED_REASON = 'not signed in';
 
 export interface Logger {
   error(obj: object, message: string): void;
@@ -39,8 +42,8 @@ export interface SyncServiceOptions {
   sweepThreshold?: number;
   // Interval for the sweep. Default 5 minutes. Zero disables the sweep.
   sweepIntervalMs?: number;
-  // How often every open connection's membership is re-read from the database. This is what picks
-  // up changes made by another process. Default 30 seconds. Zero disables it.
+  // How often every open connection's membership and session are re-read from the database. This is
+  // what picks up changes made by another process. Default 30 seconds. Zero disables it.
   membershipCheckMs?: number;
   logger: Logger;
   now?: () => number;
@@ -53,14 +56,16 @@ export interface SyncServiceOptions {
 // Permissions are enforced in three places. The database checks the writer's role inside each
 // write, so a revoked user cannot write even from a process that has not heard of the change. The
 // room drops changes from read-only connections. And this service keeps each open connection's
-// role current: a change made in this process is applied at once, and a periodic reconcile catches
-// changes made elsewhere.
+// role and session current: a change made in this process is applied at once, and a periodic check
+// catches changes made elsewhere. Signing out closes the session's sockets at once.
 export class SyncService {
   private readonly db: DbExecutor;
   private readonly store: BoardStore;
   private readonly rooms: RoomRegistry;
   private readonly users: UserConnectionCounter;
   private readonly connections = new Map<string, SyncConnection>();
+  // The session hash each connection was opened with, by connection id.
+  private readonly sessions = new Map<string, string>();
   private readonly limits: ConnectionLimits;
   private readonly logger: Logger;
   private readonly now: () => number;
@@ -106,7 +111,12 @@ export class SyncService {
 
   // Checks the board, the user's connection budget and the room's capacity, then joins the room.
   // Access is checked after authentication, so a non-member gets the same answer as a missing board.
-  async open(input: { user: AuthUser; boardId: string; socket: SocketLike }): Promise<OpenResult> {
+  async open(input: {
+    user: AuthUser;
+    boardId: string;
+    socket: SocketLike;
+    sessionHash: string;
+  }): Promise<OpenResult> {
     const role = await getBoardRole(this.db, input.boardId, input.user.id);
     if (!role) {
       return { ok: false, code: CLOSE_POLICY_VIOLATION, reason: 'board not found' };
@@ -143,6 +153,7 @@ export class SyncService {
       return { ok: false, code: CLOSE_POLICY_VIOLATION, reason };
     }
     this.connections.set(connection.id, connection);
+    this.sessions.set(connection.id, input.sessionHash);
 
     // The role was read before the join. A change committed in between is caught here: the join is
     // already registered, so any later change reaches this connection through applyMembership.
@@ -222,6 +233,31 @@ export class SyncService {
     }
   }
 
+  // Closes this process's connections that were opened with a session, at sign-out. The sockets close
+  // at once rather than at the next access check.
+  endSession(sessionHash: string): void {
+    for (const [connectionId, hash] of [...this.sessions]) {
+      if (hash === sessionHash) {
+        this.connections.get(connectionId)?.close(CLOSE_POLICY_VIOLATION, SESSION_ENDED_REASON);
+      }
+    }
+  }
+
+  // Closes every connection whose session is no longer active: signed out, revoked or expired.
+  async reconcileSessions(): Promise<void> {
+    for (const sessionHash of new Set(this.sessions.values())) {
+      const session = await resolveSessionHash(this.db, sessionHash);
+      if (session.status !== 'active') {
+        this.endSession(sessionHash);
+      }
+    }
+  }
+
+  private async reconcileAccess(): Promise<void> {
+    await this.reconcileMemberships();
+    await this.reconcileSessions();
+  }
+
   // Starts the heartbeat. Every interval it pings each connection and drops any that have not
   // answered within the timeout.
   startHeartbeat(): void {
@@ -243,13 +279,13 @@ export class SyncService {
     this.heartbeat.unref();
   }
 
-  // Starts the periodic membership check. See reconcileMemberships.
+  // Starts the periodic access check. See reconcileMemberships and reconcileSessions.
   startMembershipCheck(): void {
     if (this.membershipCheck || this.membershipCheckMs <= 0) {
       return;
     }
     this.membershipCheck = setInterval(() => {
-      this.track(this.reconcileMemberships());
+      this.track(this.reconcileAccess());
     }, this.membershipCheckMs);
     this.membershipCheck.unref();
   }
@@ -335,6 +371,7 @@ export class SyncService {
       return;
     }
     this.users.release(connection.userId);
+    this.sessions.delete(connection.id);
     this.rooms.leave(connection.boardId, connection.id);
   }
 }

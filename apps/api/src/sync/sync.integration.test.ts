@@ -26,6 +26,9 @@ import {
   type OpenResult,
 } from './service';
 
+// These tests do not check sessions, so any session hash will do.
+const TEST_SESSION = 'session-hash-for-tests';
+
 // A socket that records what it was sent, so tests can read the frames a client would receive.
 class FakeSocket implements SocketLike {
   readonly sent: Uint8Array[] = [];
@@ -116,7 +119,7 @@ describeWithDatabase('board sync service', () => {
   };
 
   const openAs = (activeService: SyncService, user: AuthUser, boardId: string) =>
-    activeService.open({ user, boardId, socket: new FakeSocket() });
+    activeService.open({ user, boardId, socket: new FakeSocket(), sessionHash: TEST_SESSION });
 
   // Hands each frame the server sent to the client, and sends the client's replies back.
   async function pump(
@@ -199,8 +202,18 @@ describeWithDatabase('board sync service', () => {
 
     const aliceSocket = new FakeSocket();
     const bobSocket = new FakeSocket();
-    const aliceJoin = await service.open({ user: alice, boardId: board.id, socket: aliceSocket });
-    const bobJoin = await service.open({ user: bob, boardId: board.id, socket: bobSocket });
+    const aliceJoin = await service.open({
+      user: alice,
+      boardId: board.id,
+      socket: aliceSocket,
+      sessionHash: TEST_SESSION,
+    });
+    const bobJoin = await service.open({
+      user: bob,
+      boardId: board.id,
+      socket: bobSocket,
+      sessionHash: TEST_SESSION,
+    });
     if (!aliceJoin.ok || !bobJoin.ok) throw new Error('expected both clients to join');
 
     const aliceDoc = new Y.Doc();
@@ -229,7 +242,12 @@ describeWithDatabase('board sync service', () => {
 
     const before = makeService(store);
     const socket = new FakeSocket();
-    const join = await before.open({ user: owner, boardId: board.id, socket });
+    const join = await before.open({
+      user: owner,
+      boardId: board.id,
+      socket,
+      sessionHash: TEST_SESSION,
+    });
     if (!join.ok) throw new Error('expected the owner to join');
     const client = new SyncClient({ doc: new Y.Doc(), remoteOrigin: REMOTE_ORIGIN });
     await before.receive(join.connection, client.start());
@@ -241,7 +259,12 @@ describeWithDatabase('board sync service', () => {
 
     const after = makeService(store);
     const returning = new FakeSocket();
-    const rejoin = await after.open({ user: owner, boardId: board.id, socket: returning });
+    const rejoin = await after.open({
+      user: owner,
+      boardId: board.id,
+      socket: returning,
+      sessionHash: TEST_SESSION,
+    });
     if (!rejoin.ok) throw new Error('expected the owner to rejoin');
     const reader = new SyncClient({ doc: new Y.Doc(), remoteOrigin: REMOTE_ORIGIN });
     await after.receive(rejoin.connection, reader.start());
@@ -255,7 +278,12 @@ describeWithDatabase('board sync service', () => {
     const owner = await newUser('Acks');
     const board = await createBoard(database.db, { ownerId: owner.id, title: 'Acks' });
     const socket = new FakeSocket();
-    const join = await service.open({ user: owner, boardId: board.id, socket });
+    const join = await service.open({
+      user: owner,
+      boardId: board.id,
+      socket,
+      sessionHash: TEST_SESSION,
+    });
     if (!join.ok) throw new Error('expected the owner to join');
     const client = new SyncClient({ doc: new Y.Doc(), remoteOrigin: REMOTE_ORIGIN });
     await service.receive(join.connection, client.start());
@@ -274,11 +302,17 @@ describeWithDatabase('board sync service', () => {
     const board = await createBoard(database.db, { ownerId: owner.id, title: 'Failing' });
     const senderSocket = new FakeSocket();
     const neighbourSocket = new FakeSocket();
-    const sender = await service.open({ user: owner, boardId: board.id, socket: senderSocket });
+    const sender = await service.open({
+      user: owner,
+      boardId: board.id,
+      socket: senderSocket,
+      sessionHash: TEST_SESSION,
+    });
     const neighbour = await service.open({
       user: owner,
       boardId: board.id,
       socket: neighbourSocket,
+      sessionHash: TEST_SESSION,
     });
     if (!sender.ok || !neighbour.ok) throw new Error('expected both to join');
 
@@ -302,8 +336,18 @@ describeWithDatabase('board sync service', () => {
     const board = await createBoard(database.db, { ownerId: owner.id, title: 'Oversize' });
     const offender = new FakeSocket();
     const neighbour = new FakeSocket();
-    const bad = await service.open({ user: owner, boardId: board.id, socket: offender });
-    const good = await service.open({ user: owner, boardId: board.id, socket: neighbour });
+    const bad = await service.open({
+      user: owner,
+      boardId: board.id,
+      socket: offender,
+      sessionHash: TEST_SESSION,
+    });
+    const good = await service.open({
+      user: owner,
+      boardId: board.id,
+      socket: neighbour,
+      sessionHash: TEST_SESSION,
+    });
     if (!bad.ok || !good.ok) throw new Error('expected both to open');
 
     await service.receive(bad.connection, new Uint8Array(connectionLimits.maxFrameBytes + 1));
@@ -330,7 +374,12 @@ describeWithDatabase('board sync service', () => {
     const board = await createBoard(database.db, { ownerId: owner.id, title: 'Demotion' });
     await addMember(database.db, { boardId: board.id, userId: editor.id, role: 'editor' });
     const socket = new FakeSocket();
-    const join = await service.open({ user: editor, boardId: board.id, socket });
+    const join = await service.open({
+      user: editor,
+      boardId: board.id,
+      socket,
+      sessionHash: TEST_SESSION,
+    });
     if (!join.ok) throw new Error('expected the editor to join');
 
     await setMemberRole(database.db, { boardId: board.id, userId: editor.id, role: 'viewer' });
@@ -351,7 +400,12 @@ describeWithDatabase('board sync service', () => {
     const board = await createBoard(database.db, { ownerId: owner.id, title: 'Removal' });
     await addMember(database.db, { boardId: board.id, userId: member.id, role: 'viewer' });
     const socket = new FakeSocket();
-    const join = await service.open({ user: member, boardId: board.id, socket });
+    const join = await service.open({
+      user: member,
+      boardId: board.id,
+      socket,
+      sessionHash: TEST_SESSION,
+    });
     if (!join.ok) throw new Error('expected the member to join');
 
     await removeMember(database.db, { boardId: board.id, userId: member.id });
@@ -374,11 +428,13 @@ describeWithDatabase('board sync service', () => {
       user: editor,
       boardId: board.id,
       socket: editorSocket,
+      sessionHash: TEST_SESSION,
     });
     const leaverJoin = await service.open({
       user: leaver,
       boardId: board.id,
       socket: leaverSocket,
+      sessionHash: TEST_SESSION,
     });
     if (!editorJoin.ok || !leaverJoin.ok) throw new Error('expected both to join');
 
@@ -396,7 +452,12 @@ describeWithDatabase('board sync service', () => {
     const owner = await newUser('Deleting owner');
     const board = await createBoard(database.db, { ownerId: owner.id, title: 'Doomed' });
     const socket = new FakeSocket();
-    const join = await service.open({ user: owner, boardId: board.id, socket });
+    const join = await service.open({
+      user: owner,
+      boardId: board.id,
+      socket,
+      sessionHash: TEST_SESSION,
+    });
     if (!join.ok) throw new Error('expected the owner to join');
 
     await deleteBoard(database.db, board.id);
@@ -436,7 +497,12 @@ describeWithDatabase('board sync service', () => {
     const board = await createBoard(database.db, { ownerId: owner.id, title: 'Stale' });
     await addMember(database.db, { boardId: board.id, userId: editor.id, role: 'editor' });
     const socket = new FakeSocket();
-    const join = await service.open({ user: editor, boardId: board.id, socket });
+    const join = await service.open({
+      user: editor,
+      boardId: board.id,
+      socket,
+      sessionHash: TEST_SESSION,
+    });
     if (!join.ok) throw new Error('expected the editor to join');
 
     // The room still holds the editor's old role, so only the database check can refuse this write.
