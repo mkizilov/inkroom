@@ -313,6 +313,28 @@ describe('viewport interaction', () => {
     expect(screenToWorld(anchor, after.viewport)).toEqual(screenToWorld(anchor, before.viewport));
   });
 
+  it('applies wheel input to the latest viewport so back-to-back events accumulate', () => {
+    const anchor = { x: 0, y: 0 };
+    const state = run(
+      withView({ scale: 1, offsetX: 0, offsetY: 0 }),
+      { type: 'wheel', anchor, input: { deltaX: 0, deltaY: -100, zoom: true } },
+      { type: 'wheel', anchor, input: { deltaX: 0, deltaY: -100, zoom: true } },
+    );
+
+    expect(state.viewport.scale).toBeCloseTo(Math.exp(2), 9);
+  });
+
+  it('pans with plain wheel input from the latest viewport', () => {
+    const anchor = { x: 0, y: 0 };
+    const state = run(
+      withView({ scale: 1, offsetX: 0, offsetY: 0 }),
+      { type: 'wheel', anchor, input: { deltaX: 0, deltaY: 30, zoom: false } },
+      { type: 'wheel', anchor, input: { deltaX: 0, deltaY: 30, zoom: false } },
+    );
+
+    expect(state.viewport).toEqual({ scale: 1, offsetX: 0, offsetY: -60 });
+  });
+
   it('clamps zoom to the supported range', () => {
     const state = run(withView({ scale: 1, offsetX: 0, offsetY: 0 }), {
       type: 'zoom',

@@ -13,7 +13,6 @@ import {
   INITIAL_VIEWPORT,
   pinchSample,
   pinchViewport,
-  wheelViewport,
   worldToScreen,
   type PinchSample,
   type PinchStart,
@@ -43,14 +42,9 @@ function pinchFrom(points: Point[]): PinchSample | null {
 export function CanvasEditor() {
   const [state, dispatch] = useReducer(editorReducer, undefined, createEditorState);
   const surfaceRef = useRef<HTMLDivElement>(null);
-  const viewportRef = useRef(state.viewport);
   const pointersRef = useRef(new Map<number, Point>());
   const pinchRef = useRef<PinchStart | null>(null);
   const [size, setSize] = useState({ width: 800, height: 600 });
-
-  useEffect(() => {
-    viewportRef.current = state.viewport;
-  }, [state.viewport]);
 
   useEffect(() => {
     const element = surfaceRef.current;
@@ -79,14 +73,14 @@ export function CanvasEditor() {
       event.preventDefault();
       const unit =
         event.deltaMode === 1 ? LINE_HEIGHT_PX : event.deltaMode === 2 ? window.innerHeight : 1;
-      const anchor = pointIn(element, event.clientX, event.clientY);
       dispatch({
-        type: 'setViewport',
-        viewport: wheelViewport(viewportRef.current, anchor, {
+        type: 'wheel',
+        anchor: pointIn(element, event.clientX, event.clientY),
+        input: {
           deltaX: event.deltaX * unit,
           deltaY: event.deltaY * unit,
           zoom: event.ctrlKey || event.metaKey,
-        }),
+        },
       });
     };
     element.addEventListener('wheel', onWheel, { passive: false });
@@ -142,7 +136,7 @@ export function CanvasEditor() {
       dispatch({ type: 'pointerCancel' });
       const sample = pinchFrom([...pointers.values()]);
       if (sample) {
-        pinchRef.current = { ...sample, viewport: viewportRef.current };
+        pinchRef.current = { ...sample, viewport: state.viewport };
       }
     } else if (pointers.size === 1) {
       dispatch({

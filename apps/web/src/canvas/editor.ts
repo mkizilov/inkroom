@@ -10,9 +10,11 @@ import {
   INITIAL_VIEWPORT,
   panBy,
   screenToWorld,
+  wheelViewport,
   worldLength,
   zoomAt,
   type Viewport,
+  type WheelInput,
 } from './viewport';
 
 export type Tool = 'select' | 'pan' | 'pen' | 'rectangle' | 'ellipse' | 'line' | 'arrow' | 'text';
@@ -63,6 +65,7 @@ export type EditorAction =
   | { type: 'doubleClick'; screen: Point }
   | { type: 'setViewport'; viewport: Viewport }
   | { type: 'zoom'; factor: number; anchor: Point }
+  | { type: 'wheel'; anchor: Point; input: WheelInput }
   | { type: 'setTool'; tool: Tool }
   | { type: 'setSpaceHeld'; held: boolean }
   | { type: 'deleteSelected' }
@@ -108,6 +111,12 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return {
         ...state,
         viewport: zoomAt(state.viewport, action.anchor, state.viewport.scale * action.factor),
+      };
+    case 'wheel':
+      // Computed from the latest state, so back-to-back wheel events accumulate.
+      return {
+        ...state,
+        viewport: wheelViewport(state.viewport, action.anchor, action.input),
       };
     case 'setTool':
       return {
