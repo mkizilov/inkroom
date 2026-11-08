@@ -91,12 +91,15 @@ trackpad input, so a mouse wheel without Ctrl pans rather than zooms.
 - `apps/web/src/canvas/editor.test.ts`: drawing, selection, moving, marquee, panning, zooming and
   text editing, driven through the reducer. Includes checks that drawn and moved coordinates are
   the same world values at several zoom levels.
-- `apps/web/src/canvas/CanvasEditor.test.tsx`: toolbar, keyboard shortcuts and zoom readout, with
-  the Konva scene mocked (jsdom has no 2D canvas).
+- `apps/web/src/canvas/CanvasEditor.test.tsx`: toolbar, keyboard shortcuts and zoom readout, plus
+  DOM pointer and wheel events dispatched to the real component. The Konva scene is mocked (jsdom
+  has no 2D canvas) and records its props, so tests can check the resulting document.
 
-The pointer-to-reducer path is exercised by the reducer tests with screen coordinates. The DOM
-event wiring (pointer capture, the wheel listener, pinch tracking) is not covered by automated
-tests, because jsdom does not model pointer events or layout.
+The reducer tests drive pointer sequences with screen coordinates. The component tests dispatch
+`MouseEvent` and `WheelEvent` objects named `pointerdown`, `pointermove`, `pointerup` and `wheel`,
+because jsdom has no `PointerEvent`. They cover the surface's event wiring, Ctrl + wheel zoom,
+plain-wheel pan, and drawing after zooming. Not covered: pinch tracking across two real pointers,
+pointer capture against the browser, and touch-action behaviour. Those need a browser test.
 
 ## Limitations
 
