@@ -30,12 +30,13 @@ describeWithDatabase('authentication', () => {
 
   beforeAll(async () => {
     database = await createTestDatabase(testDatabaseUrl ?? '');
-    app = buildApp({
+    ({ app } = await buildApp({
       database,
+      startHeartbeat: false,
       webOrigin: WEB_ORIGIN,
       cookieSecure: false,
       loginRateLimits: { maxFailuresPerEmail: 3, maxFailuresPerIp: 100, windowMs: 60_000 },
-    });
+    }));
   });
 
   afterAll(async () => {

@@ -48,7 +48,12 @@ describeWithDatabase('board management API', () => {
 
   beforeAll(async () => {
     database = await createTestDatabase(testDatabaseUrl ?? '');
-    app = buildApp({ database, webOrigin: WEB_ORIGIN, cookieSecure: false });
+    ({ app } = await buildApp({
+      database,
+      webOrigin: WEB_ORIGIN,
+      cookieSecure: false,
+      startHeartbeat: false,
+    }));
   });
 
   afterAll(async () => {

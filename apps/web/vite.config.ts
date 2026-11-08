@@ -8,7 +8,8 @@ export default defineConfig({
     port: 21173,
     strictPort: true,
     proxy: {
-      '/api': 'http://127.0.0.1:21080',
+      // ws: true forwards the WebSocket upgrade for board sync.
+      '/api': { target: 'http://127.0.0.1:21080', ws: true },
     },
   },
   test: {

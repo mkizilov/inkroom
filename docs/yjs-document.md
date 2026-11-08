@@ -107,8 +107,8 @@ rejection of operations that do not fit, and malformed entries (which are report
 
 ## Known limits
 
-- **No networking.** Updates are produced by `onLocalUpdate` and consumed by `applyRemote`. The
-  transport is still to be built.
+- **Networking is in `docs/sync.md`.** Updates produced by `onLocalUpdate` are sent over a WebSocket,
+  and received updates go through `applyRemote`. The server holds the room's document in memory.
 - **No persistence.** Nothing is written to the database. A reload starts with an empty document.
 - **No garbage collection of deleted objects.** Yjs keeps tombstones, so the document grows with
   the history of edits. Snapshots and compaction belong with the persistence work.

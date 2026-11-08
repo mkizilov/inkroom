@@ -5,7 +5,7 @@ import { createDatabase } from './db/client';
 async function main(): Promise<void> {
   const config = loadConfig();
   const database = createDatabase(config.databaseUrl);
-  const app = buildApp({
+  const { app, sync } = await buildApp({
     database,
     logger: true,
     webOrigin: config.webOrigin,
@@ -14,6 +14,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
     app.log.info({ signal }, 'shutting down');
+    sync.shutdown();
     await app.close();
     await database.close();
     process.exit(0);

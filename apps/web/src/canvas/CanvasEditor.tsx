@@ -7,6 +7,7 @@ import {
 import type { Point, TextObject } from '@inkroom/shared';
 import { CanvasScene } from './CanvasScene';
 import { TOOL_SHORTCUTS, type EditorAction } from './editor';
+import { SyncProvider, boardSyncUrl, type SocketLike } from './sync/provider';
 import { EditorSession } from './session';
 import { useEditorState } from './useEditorState';
 import { describeCanvas } from './status';
@@ -83,12 +84,29 @@ function pinchFrom(points: Point[]): PinchSample | null {
   return first && second ? pinchSample(first, second) : null;
 }
 
-export function CanvasEditor() {
+export function CanvasEditor({ boardId }: { boardId?: string }) {
   // The session owns the document (a Yjs document) for this editor instance. The view and the
   // document stay in step through the session; see session.ts.
   const [session] = useState(() => new EditorSession());
   const state = useEditorState(session);
   const dispatch = session.dispatch;
+
+  // Connects the document to the board's sync endpoint while the editor is mounted. Without a
+  // board id the editor is local only, as in the standalone tests.
+  useEffect(() => {
+    if (!boardId) {
+      return;
+    }
+    const provider = new SyncProvider({
+      document: session.document,
+      url: boardSyncUrl(boardId, window.location),
+      // The browser socket has the same members the provider uses; its event handler types are
+      // wider, so the adapter is a cast at this single point.
+      createSocket: (url) => new WebSocket(url) as unknown as SocketLike,
+    });
+    provider.start();
+    return () => provider.stop();
+  }, [boardId, session]);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const pointersRef = useRef(new Map<number, Point>());
   const pinchRef = useRef<PinchStart | null>(null);

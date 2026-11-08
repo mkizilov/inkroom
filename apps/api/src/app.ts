@@ -1,3 +1,4 @@
+import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { type HealthResponse } from '@inkroom/shared';
 import { createRequireUser } from './auth/middleware';
@@ -7,6 +8,13 @@ import { registerBoardRoutes } from './boards/routes';
 import type { Database } from './db/client';
 import { registerErrorHandlers } from './http/errors';
 import { requireTrustedOrigin } from './http/origin';
+import {
+  DEFAULT_CONNECTION_LIMITS,
+  type ConnectionLimits,
+} from './sync/connections';
+import { SyncService } from './sync/service';
+import { registerSyncRoutes } from './sync/routes';
+import { DEFAULT_ROOM_LIMITS, type RoomLimits } from './sync/room';
 
 export const DEFAULT_WEB_ORIGIN = 'http://127.0.0.1:21173';
 
@@ -28,20 +36,35 @@ export interface BuildAppOptions {
   webOrigin?: string;
   cookieSecure?: boolean;
   loginRateLimits?: Partial<LoginRateLimits>;
+  roomLimits?: Partial<RoomLimits>;
+  connectionLimits?: Partial<ConnectionLimits>;
+  // Heartbeats are a server concern, so tests can run them quickly or not at all.
+  startHeartbeat?: boolean;
 }
 
-export function buildApp({
-  database,
-  logger = false,
-  webOrigin = DEFAULT_WEB_ORIGIN,
-  cookieSecure = false,
-  loginRateLimits,
-}: BuildAppOptions): FastifyInstance {
+// The sync service is returned with the app so the server can shut it down with the process.
+export interface InkRoomApp {
+  app: FastifyInstance;
+  sync: SyncService;
+}
+
+export async function buildApp(options: BuildAppOptions): Promise<InkRoomApp> {
+  const {
+    database,
+    logger = false,
+    webOrigin = DEFAULT_WEB_ORIGIN,
+    cookieSecure = false,
+    loginRateLimits,
+    roomLimits,
+    connectionLimits,
+    startHeartbeat = true,
+  } = options;
   const limits = { ...DEFAULT_LOGIN_RATE_LIMITS, ...loginRateLimits };
   const app = Fastify({ logger });
 
   registerErrorHandlers(app);
   app.addHook('onRequest', requireTrustedOrigin(webOrigin));
+  await app.register(fastifyWebsocket);
 
   app.get('/api/health', async (request, reply) => {
     let databaseStatus: HealthResponse['database'] = 'up';
@@ -82,5 +105,19 @@ export function buildApp({
 
   registerBoardRoutes(app, { db: database.db, requireUser });
 
-  return app;
+  const connectionLimitsResolved = { ...DEFAULT_CONNECTION_LIMITS, ...connectionLimits };
+  const sync = new SyncService({
+    db: database.db,
+    roomLimits: { ...DEFAULT_ROOM_LIMITS, ...roomLimits },
+    connectionLimits: connectionLimitsResolved,
+  });
+  registerSyncRoutes(app, { db: database.db, service: sync, webOrigin, cookieSecure });
+  if (startHeartbeat) {
+    sync.startHeartbeat();
+  }
+  app.addHook('onClose', async () => {
+    sync.shutdown();
+  });
+
+  return { app, sync };
 }

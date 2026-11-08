@@ -55,7 +55,7 @@ export function BoardPage() {
             </div>
           </header>
           <section aria-label="Whiteboard" className="workspace">
-            <CanvasEditor />
+            <CanvasEditor boardId={state.board.id} />
           </section>
         </>
       )}

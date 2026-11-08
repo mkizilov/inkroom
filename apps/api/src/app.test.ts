@@ -16,14 +16,14 @@ const unavailableDatabase = stubDatabase(async () => {
 });
 
 describe('GET /api/health', () => {
-  const apps: ReturnType<typeof buildApp>[] = [];
+  const apps: Array<Awaited<ReturnType<typeof buildApp>>['app']> = [];
 
   afterEach(async () => {
     await Promise.all(apps.splice(0).map((app) => app.close()));
   });
 
   it('reports ok when the database responds', async () => {
-    const app = buildApp({ database: healthyDatabase });
+    const { app } = await buildApp({ database: healthyDatabase, startHeartbeat: false });
     apps.push(app);
 
     const response = await app.inject({ method: 'GET', url: '/api/health' });
@@ -37,7 +37,7 @@ describe('GET /api/health', () => {
   });
 
   it('reports degraded with 503 when the database is unavailable', async () => {
-    const app = buildApp({ database: unavailableDatabase });
+    const { app } = await buildApp({ database: unavailableDatabase, startHeartbeat: false });
     apps.push(app);
 
     const response = await app.inject({ method: 'GET', url: '/api/health' });

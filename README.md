@@ -116,6 +116,9 @@ Run from the repository root.
   text, selection, resizing, grouped transforms, copy and paste, layer order, keyboard shortcuts and
   undo and redo. The board is a Yjs document, so edits are transactions with local undo and
   remote-safe origins. See [docs/canvas.md](docs/canvas.md) and [docs/yjs-document.md](docs/yjs-document.md).
+- **Real-time sync**: each board has a Yjs room over an authenticated WebSocket. Editors and viewers
+  are enforced per connection, with frame, rate and connection limits, heartbeats, and reconnection
+  with backoff. See [docs/sync.md](docs/sync.md).
 - **Web (`apps/web`)**: React 19 with Vite. The app talks to the API only through relative `/api`
   URLs, which the dev server proxies, so no CORS configuration is needed in development.
 
@@ -160,8 +163,8 @@ Node 22. The `pnpm-lock.yaml` file must be committed for the frozen install to s
   versioned migrations, repository modules, seed data, integration tests, authentication
   (register, login, logout, current user, session expiry and revocation, rate limiting, CSRF
   origin checks) with login and registration pages, and board management with a dashboard.
-- Not implemented: WebSocket transport, canvas persistence, membership management, OAuth or social
-  sign-in, Yjs update compaction, email verification, password reset, production Docker images.
+- Not implemented: canvas persistence, membership management, live revocation of access, OAuth or
+  social sign-in, Yjs update compaction, email verification, password reset, production Docker images.
 
 ## Contributing
 
