@@ -123,6 +123,9 @@ Run from the repository root.
   acknowledged, boards are rebuilt from the store after a restart, compaction folds the log into
   revision snapshots, and owners can restore a revision. See
   [docs/persistence.md](docs/persistence.md).
+- **Live presence**: remote cursors in world coordinates, participant names and colours, remote
+  selection outlines, a participant list and connection status in the toolbar. Presence is
+  ephemeral and never stored. See [docs/presence.md](docs/presence.md).
 - **Web (`apps/web`)**: React 19 with Vite. The app talks to the API only through relative `/api`
   URLs, which the dev server proxies, so no CORS configuration is needed in development.
 
@@ -168,8 +171,9 @@ Node 22. The `pnpm-lock.yaml` file must be committed for the frozen install to s
   (register, login, logout, current user, session expiry and revocation, rate limiting, CSRF
   origin checks) with login and registration pages, and board management with a dashboard.
 - Not implemented: a revision browser or restore control in the web app, membership management,
-  live revocation of access, multi-process sync, OAuth or social sign-in, email verification,
-  password reset, production Docker images.
+  live revocation of access, multi-process sync and presence, viewport outlines for other
+  participants, OAuth or social sign-in, email verification, password reset, production Docker
+  images.
 
 ## Contributing
 

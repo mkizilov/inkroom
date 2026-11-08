@@ -6,6 +6,7 @@ import {
   type CanvasOperation,
 } from '@inkroom/shared';
 import {
+  Awareness,
   objectsMapOf,
   readOrderedObjects,
   writeOperations,
@@ -36,6 +37,9 @@ export interface WriteOptions {
 export class CanvasDocument {
   readonly doc: Y.Doc;
   readonly objects: ObjectsMap;
+  // Live presence for this board. It is ephemeral: it travels over the sync socket and is not part
+  // of the document, so it is never stored or undone.
+  readonly awareness = new Awareness();
   private readonly undoManager: Y.UndoManager;
   private readonly listeners = new Set<(change: DocumentChange) => void>();
 
@@ -138,6 +142,7 @@ export class CanvasDocument {
   }
 
   destroy(): void {
+    this.awareness.destroy();
     this.undoManager.destroy();
     this.doc.destroy();
   }

@@ -1,17 +1,20 @@
 import * as Y from 'yjs';
 import {
-  Decoder,
-  Encoder,
+  MAX_AWARENESS_STATE_BYTES,
   ProtocolError,
+  decodeAwarenessEntries,
   decodeClientMessage,
   encodeAck,
   encodeAwareness,
+  encodeAwarenessEntries,
   encodeSyncStep1,
   encodeSyncStep2,
   encodeSyncUpdate,
+  type AwarenessEntry,
   type ClientMessage,
 } from '@inkroom/shared';
 import type { BoardStore } from '../persistence/store';
+import { DEFAULT_PRESENCE_LIMITS, PresenceRegistry, type PresenceLimits } from './presence';
 
 // A connection as the room sees it. The transport supplies `send`, which returns false when the
 // socket can no longer take frames.
@@ -36,6 +39,10 @@ export const DEFAULT_ROOM_LIMITS: RoomLimits = {
   maxUpdateBytesPerSecond: 4 * 1024 * 1024,
 };
 
+// Presence frames are small and frequent (cursor moves). This bounds them per connection, with room
+// for the throttled cursor rate and a heartbeat.
+export const MAX_PRESENCE_FRAMES_PER_SECOND = 100;
+
 export type RoomPersistence = Pick<BoardStore, 'appendUpdate' | 'compact'>;
 
 export interface RoomOptions {
@@ -48,15 +55,15 @@ export interface RoomOptions {
   now: () => number;
   // Receives background work (compaction) so the owner can wait for it and report its failures.
   track: (work: Promise<unknown>) => void;
+  presence?: Partial<PresenceLimits>;
 }
 
 interface Subscriber {
   connection: RoomConnection;
-  // Latest awareness clock seen for each client id this connection announced. A removal must carry
-  // a clock above this, or peers that already hold the entry ignore it.
-  awarenessClocks: Map<number, number>;
   windowStart: number;
   windowBytes: number;
+  presenceWindowStart: number;
+  presenceFrames: number;
 }
 
 export type JoinResult = { ok: true } | { ok: false; reason: 'full' | 'closed' };
@@ -67,11 +74,15 @@ export type JoinResult = { ok: true } | { ok: false; reason: 'full' | 'closed' }
 // is applied to memory, broadcast to the other connections, and acknowledged to its sender. Memory
 // therefore never holds an update that the database lacks. Updates are handled one at a time in
 // arrival order, so the stored order matches the order the room applied them.
+//
+// Presence is different: it is held in memory only and is never stored. It is relayed as it
+// arrives, and a newly joined connection receives the current participants.
 export class Room {
   readonly boardId: string;
   readonly doc: Y.Doc;
   private readonly subscribers = new Map<string, Subscriber>();
   private readonly options: RoomOptions;
+  private readonly presence: PresenceRegistry;
   private queue: Promise<unknown> = Promise.resolve();
   private closed = false;
   private appendsSinceCompaction = 0;
@@ -80,6 +91,10 @@ export class Room {
     this.options = options;
     this.boardId = options.boardId;
     this.doc = options.doc;
+    this.presence = new PresenceRegistry(
+      { ...DEFAULT_PRESENCE_LIMITS, ...options.presence },
+      options.now,
+    );
   }
 
   get size(): number {
@@ -94,8 +109,9 @@ export class Room {
     return this.subscribers.has(connectionId);
   }
 
-  // Adds a connection and sends the room's state vector. The client answers with the updates the
-  // room lacks (step 2), and the room answers the client's state vector with what the client lacks.
+  // Adds a connection, sends the room's state vector, and then the participants already present.
+  // The client answers the state vector with the updates the room lacks (step 2), and the room
+  // answers the client's state vector with what the client lacks.
   join(connection: RoomConnection): JoinResult {
     if (this.closed) {
       return { ok: false, reason: 'closed' };
@@ -105,28 +121,35 @@ export class Room {
     }
     this.subscribers.set(connection.id, {
       connection,
-      awarenessClocks: new Map(),
       windowStart: 0,
       windowBytes: 0,
+      presenceWindowStart: 0,
+      presenceFrames: 0,
     });
     connection.send(encodeSyncStep1(Y.encodeStateVector(this.doc)));
+    const participants = this.presence.snapshot();
+    if (participants.length > 0) {
+      connection.send(encodeAwareness(encodeAwarenessEntries(participants)));
+    }
     return { ok: true };
   }
 
-  // Removes a connection and announces that its presence has gone.
+  // Removes a connection and tells the others that everything it held is gone.
   leave(connectionId: string): void {
     const subscriber = this.subscribers.get(connectionId);
     if (!subscriber) {
       return;
     }
     this.subscribers.delete(connectionId);
-    if (subscriber.awarenessClocks.size > 0) {
-      const removals = [...subscriber.awarenessClocks].map(([clientId, clock]) => ({
-        clientId,
-        clock: clock + 1,
-      }));
-      this.broadcast(connectionId, encodeAwareness(awarenessRemoval(removals)));
+    this.relayPresence(this.presence.release(connectionId), '');
+  }
+
+  // Removes participants whose state has gone stale. Called on the heartbeat.
+  expirePresence(): void {
+    if (this.closed) {
+      return;
     }
+    this.relayPresence(this.presence.expire(), '');
   }
 
   // Handles one frame from a connection. The frame is decoded now, and handled after every earlier
@@ -159,7 +182,7 @@ export class Room {
   }
 
   // Ends the room. Its document is released; the stored log is unaffected, so a later room for the
-  // same board rebuilds the same state.
+  // same board rebuilds the same state. Presence is discarded with the room.
   destroy(): void {
     if (this.closed) {
       return;
@@ -187,12 +210,12 @@ export class Room {
     const from = subscriber.connection;
 
     switch (message.kind) {
-      case 'awareness':
-        for (const entry of readAwareness(message.update)) {
-          subscriber.awarenessClocks.set(entry.clientId, entry.clock);
-        }
-        this.broadcast(from.id, encodeAwareness(message.update));
+      case 'awareness': {
+        this.chargePresence(subscriber);
+        const entries = decodeAwarenessEntries(message.update, MAX_AWARENESS_STATE_BYTES);
+        this.relayPresence(this.presence.accept(from.id, entries), from.id);
         return;
+      }
       case 'ack':
         throw new ProtocolError('clients may not send acknowledgements');
       case 'sync':
@@ -260,6 +283,25 @@ export class Room {
     }
   }
 
+  // Charges one presence frame against this connection's one-second window.
+  private chargePresence(subscriber: Subscriber): void {
+    const now = this.options.now();
+    if (now - subscriber.presenceWindowStart >= 1000) {
+      subscriber.presenceWindowStart = now;
+      subscriber.presenceFrames = 0;
+    }
+    subscriber.presenceFrames += 1;
+    if (subscriber.presenceFrames > MAX_PRESENCE_FRAMES_PER_SECOND) {
+      throw new ProtocolError('presence update rate limit exceeded');
+    }
+  }
+
+  private relayPresence(entries: AwarenessEntry[], exceptId: string): void {
+    if (entries.length > 0) {
+      this.broadcast(exceptId, encodeAwareness(encodeAwarenessEntries(entries)));
+    }
+  }
+
   // Sends a frame to every connection except `exceptId`. A connection that cannot take the frame
   // is removed, so one broken socket cannot hold up the others.
   private broadcast(exceptId: string, frame: Uint8Array): void {
@@ -285,41 +327,22 @@ function decodeOrRefuse(update: Uint8Array): ReturnType<typeof Y.decodeUpdate> {
   }
 }
 
-interface AwarenessEntry {
-  clientId: number;
-  clock: number;
-}
-
-// Awareness payload: varUint(count), then per entry varUint(clientId), varUint(clock), and the
-// state as a length-prefixed JSON string. A state of "null" marks the client as gone. Entries that
-// cannot be read are skipped, so a malformed update still reaches peers unchanged.
-export function readAwareness(update: Uint8Array): AwarenessEntry[] {
+// Lenient reading of an awareness body: returns the ids and clocks, or nothing when unreadable.
+// Kept for tooling and tests; the room itself reads presence strictly.
+export function readAwareness(update: Uint8Array): Array<{ clientId: number; clock: number }> {
   try {
-    const decoder = new Decoder(update);
-    const count = decoder.readVarUint();
-    const entries: AwarenessEntry[] = [];
-    for (let index = 0; index < count; index += 1) {
-      const clientId = decoder.readVarUint();
-      const clock = decoder.readVarUint();
-      decoder.readVarBytes(Number.MAX_SAFE_INTEGER);
-      entries.push({ clientId, clock });
-    }
-    return entries;
+    return decodeAwarenessEntries(update, Number.MAX_SAFE_INTEGER).map(({ clientId, clock }) => ({
+      clientId,
+      clock,
+    }));
   } catch {
     return [];
   }
 }
 
-// An awareness payload that marks each client as gone. Peers drop its presence on receipt, as long
-// as each clock is newer than the one they hold.
-export function awarenessRemoval(entries: AwarenessEntry[]): Uint8Array {
-  const encoder = new Encoder();
-  encoder.writeVarUint(entries.length);
-  const nullState = new TextEncoder().encode('null');
-  for (const entry of entries) {
-    encoder.writeVarUint(entry.clientId);
-    encoder.writeVarUint(entry.clock);
-    encoder.writeVarBytes(nullState);
-  }
-  return encoder.toUint8Array();
+// An awareness body that marks each id as gone, with the given clocks.
+export function awarenessRemoval(entries: Array<{ clientId: number; clock: number }>): Uint8Array {
+  return encodeAwarenessEntries(
+    entries.map(({ clientId, clock }) => ({ clientId, clock, json: null })),
+  );
 }

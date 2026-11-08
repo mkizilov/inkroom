@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
-import { encodeSyncStep1, encodeSyncUpdate } from '@inkroom/shared';
+import {
+  Awareness,
+  encodeAwareness,
+  encodeSyncStep1,
+  encodeSyncUpdate,
+} from '@inkroom/shared';
 import { CanvasDocument } from '../doc/canvas-document';
 import {
   POLICY_VIOLATION_CLOSE,
@@ -234,6 +239,88 @@ describe('sync provider connection', () => {
     const first = reconnect.sent[0] as Uint8Array;
     const stateVector = first.subarray(3);
     expect(Array.from(stateVector)).toEqual(Array.from(Y.encodeStateVector(document.doc)));
+    provider.stop();
+  });
+});
+
+describe('presence over the sync socket', () => {
+  const remotePresence = (clientId: number, name: string) => {
+    const other = new Awareness();
+    other.setLocalState({
+      user: { id: '00000000-0000-4000-8000-0000000000bb', name, color: '#2f9e44' },
+      cursor: { x: 1, y: 2 },
+      selection: [],
+    });
+    return other;
+  };
+
+  it('sends this presence on connect, and later changes as they happen', () => {
+    const { provider, document, sockets } = harness();
+    document.awareness.setLocalState({
+      user: { id: '00000000-0000-4000-8000-0000000000aa', name: 'Ada', color: '#1971c2' },
+      cursor: null,
+      selection: [],
+    });
+    provider.start();
+    sockets[0]?.open();
+    const beforeChange = sockets[0]?.sent.length ?? 0;
+
+    document.awareness.setLocalState({
+      user: { id: '00000000-0000-4000-8000-0000000000aa', name: 'Ada', color: '#1971c2' },
+      cursor: { x: 3, y: 4 },
+      selection: [],
+    });
+
+    const sentOnConnect = sockets[0]?.sent.some((frame) => frame[0] === 1 && frame.length > 0);
+    expect(sentOnConnect).toBe(true);
+    expect((sockets[0]?.sent.length ?? 0) - beforeChange).toBe(1);
+    provider.stop();
+  });
+
+  it('applies remote presence it receives, without sending it back', () => {
+    const { provider, document, sockets } = harness();
+    provider.start();
+    const socket = sockets[0] as FakeSocket;
+    socket.open();
+    const sentBefore = socket.sent.length;
+
+    const bob = remotePresence(7, 'Bob');
+    socket.receive(encodeAwareness(bob.encodeLocal()));
+
+    expect(document.awareness.remoteStates().map((entry) => entry.state)).toEqual([
+      expect.objectContaining({ user: expect.objectContaining({ name: 'Bob' }) }),
+    ]);
+    expect(socket.sent.length).toBe(sentBefore);
+    provider.stop();
+  });
+
+  it('forgets remote participants on disconnect, and sends presence again on reconnect', () => {
+    const { provider, document, sockets, timers } = harness();
+    provider.start();
+    sockets[0]?.open();
+    sockets[0]?.receive(encodeAwareness(remotePresence(7, 'Bob').encodeLocal()));
+    expect(document.awareness.remoteStates()).toHaveLength(1);
+
+    sockets[0]?.drop(1006);
+
+    expect(document.awareness.remoteStates()).toEqual([]);
+    timers.fireNext();
+    sockets.at(-1)?.open();
+    expect(sockets.at(-1)?.sent.length).toBeGreaterThan(0);
+    provider.stop();
+  });
+
+  it('does not forward a remote presence change back to the server', () => {
+    const { provider, sockets } = harness();
+    provider.start();
+    const socket = sockets[0] as FakeSocket;
+    socket.open();
+    const before = socket.sent.length;
+
+    socket.receive(encodeAwareness(remotePresence(9, 'Carol').encodeLocal()));
+    socket.receive(encodeAwareness(remotePresence(9, 'Carol').encodeLocal()));
+
+    expect(socket.sent.length).toBe(before);
     provider.stop();
   });
 });

@@ -1,4 +1,4 @@
-import { SyncClient } from '@inkroom/shared';
+import { SyncClient, encodeAwareness } from '@inkroom/shared';
 import type { CanvasDocument } from '../doc/canvas-document';
 import { REMOTE_ORIGIN } from '../doc/canvas-document';
 
@@ -7,6 +7,10 @@ import { REMOTE_ORIGIN } from '../doc/canvas-document';
 // Reconnection uses exponential backoff with jitter. A close with code 1008 (policy violation)
 // means the server refused this user for this board, for example because the board was deleted or
 // the membership was removed; the provider stops rather than retrying forever.
+//
+// Presence travels over the same socket. This client's state is sent on every connect, its later
+// changes are forwarded as they happen, and remote participants are cleared on disconnect, since
+// nothing can refresh them while the socket is down.
 
 export const POLICY_VIOLATION_CLOSE = 1008;
 
@@ -72,13 +76,18 @@ export class SyncProvider {
   private stopped = false;
   private state: ConnectionState = 'connecting';
   private unsubscribe: (() => void) | null = null;
+  private unsubscribeAwareness: (() => void) | null = null;
 
   constructor(options: ProviderOptions) {
     this.options = options;
     this.document = options.document;
     this.timers = options.timers ?? globalTimers;
     this.random = options.random ?? Math.random;
-    this.client = new SyncClient({ doc: options.document.doc, remoteOrigin: REMOTE_ORIGIN });
+    this.client = new SyncClient({
+      doc: options.document.doc,
+      remoteOrigin: REMOTE_ORIGIN,
+      awareness: options.document.awareness,
+    });
   }
 
   get connectionState(): ConnectionState {
@@ -96,6 +105,11 @@ export class SyncProvider {
         this.socket.send(this.client.frameForLocalUpdate(update));
       }
     });
+    this.unsubscribeAwareness = this.document.awareness.onLocalChange((body) => {
+      if (this.socket && this.isOpen(this.socket)) {
+        this.socket.send(encodeAwareness(body));
+      }
+    });
     this.connect();
   }
 
@@ -105,6 +119,9 @@ export class SyncProvider {
     this.cancelRetry();
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.unsubscribeAwareness?.();
+    this.unsubscribeAwareness = null;
+    this.document.awareness.removeRemoteStates();
     if (this.socket) {
       const socket = this.socket;
       this.socket = null;
@@ -117,6 +134,9 @@ export class SyncProvider {
   private connect(): void {
     this.cancelRetry();
     this.setState(this.attempts === 0 ? 'connecting' : 'reconnecting');
+    // A new connection gets a new presence id. The server removes the old one when the old
+    // connection closed, and a fresh id cannot be confused with its clock.
+    this.document.awareness.rotateClientId();
     const socket = this.options.createSocket(this.options.url);
     socket.binaryType = 'arraybuffer';
     this.socket = socket;
@@ -125,6 +145,10 @@ export class SyncProvider {
       this.attempts = 0;
       this.setState('connected');
       socket.send(this.client.start());
+      const local = this.document.awareness.getLocalState();
+      if (local !== null) {
+        socket.send(encodeAwareness(this.document.awareness.encodeLocal()));
+      }
     };
     socket.onmessage = (event) => {
       if (!(event.data instanceof ArrayBuffer)) {
@@ -141,6 +165,7 @@ export class SyncProvider {
       if (this.socket === socket) {
         this.socket = null;
       }
+      this.document.awareness.removeRemoteStates();
       if (this.stopped) {
         return;
       }

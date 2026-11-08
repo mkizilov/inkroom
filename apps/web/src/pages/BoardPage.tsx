@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import type { Board } from '@inkroom/shared';
+import { useAuth } from '../auth/AuthContext';
 import { describeError } from '../auth/messages';
 import { fetchBoard } from '../boards/api';
 import { roleLabels } from '../boards/format';
@@ -13,6 +14,7 @@ type BoardState =
 
 export function BoardPage() {
   const { boardId = '' } = useParams();
+  const { state: auth } = useAuth();
   const [state, setState] = useState<BoardState>({ kind: 'loading' });
 
   useEffect(() => {
@@ -55,7 +57,14 @@ export function BoardPage() {
             </div>
           </header>
           <section aria-label="Whiteboard" className="workspace">
-            <CanvasEditor boardId={state.board.id} />
+            <CanvasEditor
+              boardId={state.board.id}
+              user={
+                auth.status === 'authenticated'
+                  ? { id: auth.user.id, name: auth.user.displayName }
+                  : undefined
+              }
+            />
           </section>
         </>
       )}

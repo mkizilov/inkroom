@@ -35,6 +35,11 @@ export class RoomRegistry {
     return total;
   }
 
+  // Every live room. Used by the heartbeat to expire stale presence.
+  all(): Room[] {
+    return [...this.rooms.values()];
+  }
+
   // The live room for a board, or undefined when nobody is connected to it.
   roomFor(boardId: string): Room | undefined {
     return this.rooms.get(boardId);

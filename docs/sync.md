@@ -132,3 +132,10 @@ on a new connection is the client's state vector.
 - **The rate limit is per connection, not per user.** A user can open up to the per-user cap (20)
   connections, each with its own 4 MiB/s budget, so one account can exceed what a single connection
   allows. A per-user budget across connections is the next step.
+
+## Presence
+
+Participants' cursors, names, colours and selections travel over the same socket as awareness
+frames. They are relayed in memory, a joining connection receives everyone who is present, and they
+are removed when a connection leaves or stops refreshing. Presence is never stored. See
+[presence.md](presence.md) for the rules, the client behaviour and the limits.

@@ -163,6 +163,9 @@ export class SyncService {
       return;
     }
     this.heartbeat = setInterval(() => {
+      for (const room of this.rooms.all()) {
+        room.expirePresence();
+      }
       for (const connection of [...this.connections.values()]) {
         if (connection.isStale()) {
           connection.close(CLOSE_GOING_AWAY, 'no response to heartbeat');

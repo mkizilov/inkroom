@@ -1,3 +1,5 @@
+import type { ConnectionState } from './sync/provider';
+import type { Participant } from './presence/participants';
 import type { Tool } from './editor';
 
 const TOOL_BUTTONS: ReadonlyArray<{ tool: Tool; label: string; shortcut: string }> = [
@@ -11,6 +13,18 @@ const TOOL_BUTTONS: ReadonlyArray<{ tool: Tool; label: string; shortcut: string 
   { tool: 'text', label: 'Text', shortcut: 'T' },
 ];
 
+// 'local' is an editor with no board behind it, so there is nothing to connect to.
+export type ConnectionDisplay = 'local' | ConnectionState;
+
+const CONNECTION_LABELS: Record<ConnectionDisplay, string> = {
+  local: 'Local only',
+  connecting: 'Connecting…',
+  connected: 'Connected',
+  reconnecting: 'Reconnecting…',
+  offline: 'Offline, retrying',
+  stopped: 'Disconnected',
+};
+
 interface ToolbarProps {
   tool: Tool;
   scale: number;
@@ -18,6 +32,8 @@ interface ToolbarProps {
   canEditSelection: boolean;
   canUndo: boolean;
   canRedo: boolean;
+  participants: readonly Participant[];
+  connection: ConnectionDisplay;
   onToolChange: (tool: Tool) => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -37,6 +53,8 @@ export function Toolbar({
   canEditSelection,
   canUndo,
   canRedo,
+  participants,
+  connection,
   onToolChange,
   onZoomIn,
   onZoomOut,
@@ -117,6 +135,27 @@ export function Toolbar({
         <p role="status" aria-label="Canvas status" className="canvas-status">
           {status}
         </p>
+      </div>
+      <div className="toolbar presence-bar">
+        <output aria-label="Connection status" className={`connection connection-${connection}`}>
+          {CONNECTION_LABELS[connection]}
+        </output>
+        <ul aria-label="Participants" className="participants">
+          {participants.map((participant) => (
+            <li key={participant.clientId} data-testid="participant" className="participant">
+              <span
+                className="participant-dot"
+                style={{ background: participant.state.user.color }}
+                aria-hidden="true"
+              />
+              {participant.state.user.name}
+              {participant.isSelf ? ' (you)' : ''}
+            </li>
+          ))}
+        </ul>
+        <span className="participant-count">
+          {participants.length} {participants.length === 1 ? 'participant' : 'participants'}
+        </span>
       </div>
     </div>
   );

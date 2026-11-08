@@ -259,3 +259,16 @@ describe('CanvasEditor editing commands', () => {
     expect(statusText()).toBe('2 objects · 2 selected · 80 × 60 at 100, 100');
   });
 });
+
+describe('CanvasEditor presence', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('shows a local-only editor with no participants when there is no board', () => {
+    render(<CanvasEditor />);
+
+    expect(screen.getByLabelText('Connection status').textContent).toBe('Local only');
+    expect(screen.getByText('0 participants')).toBeTruthy();
+  });
+});

@@ -1,22 +1,24 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-} from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Point, TextObject } from '@inkroom/shared';
 import { CanvasScene } from './CanvasScene';
 import { TOOL_SHORTCUTS, type EditorAction } from './editor';
-import { SyncProvider, boardSyncUrl, type SocketLike } from './sync/provider';
+import { PresenceOverlay } from './presence/PresenceOverlay';
+import { PresenceController, type PresenceUserInfo } from './presence/presence-controller';
+import { maintainAwareness } from './presence/maintenance';
+import { browserTimers } from './presence/throttle';
+import { useParticipants } from './presence/useParticipants';
+import { describeCanvas } from './status';
+import { SyncProvider, boardSyncUrl, type ConnectionState, type SocketLike } from './sync/provider';
 import { EditorSession } from './session';
 import { useEditorState } from './useEditorState';
-import { describeCanvas } from './status';
-import { Toolbar } from './Toolbar';
+import { Toolbar, type ConnectionDisplay } from './Toolbar';
 import { selectionBounds } from './transform';
 import {
   INITIAL_VIEWPORT,
   pinchSample,
   pinchViewport,
+  screenToWorld,
+  wheelViewport,
   worldToScreen,
   type PinchSample,
   type PinchStart,
@@ -84,15 +86,25 @@ function pinchFrom(points: Point[]): PinchSample | null {
   return first && second ? pinchSample(first, second) : null;
 }
 
-export function CanvasEditor({ boardId }: { boardId?: string }) {
+export function CanvasEditor({ boardId, user }: { boardId?: string; user?: PresenceUserInfo }) {
   // The session owns the document (a Yjs document) for this editor instance. The view and the
   // document stay in step through the session; see session.ts.
   const [session] = useState(() => new EditorSession());
   const state = useEditorState(session);
   const dispatch = session.dispatch;
+  const awareness = session.document.awareness;
+  const participants = useParticipants(awareness);
+  const [connection, setConnection] = useState<ConnectionDisplay>(boardId ? 'connecting' : 'local');
+  const presenceRef = useRef<PresenceController | null>(null);
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const pointersRef = useRef(new Map<number, Point>());
+  const pinchRef = useRef<PinchStart | null>(null);
+  const [size, setSize] = useState({ width: 800, height: 600 });
+  const userId = user?.id;
+  const userName = user?.name;
 
-  // Connects the document to the board's sync endpoint while the editor is mounted. Without a
-  // board id the editor is local only, as in the standalone tests.
+  // Connects the document to the board's sync endpoint while the editor is mounted. Without a board
+  // id the editor is local only, as in the standalone tests.
   useEffect(() => {
     if (!boardId) {
       return;
@@ -100,6 +112,7 @@ export function CanvasEditor({ boardId }: { boardId?: string }) {
     const provider = new SyncProvider({
       document: session.document,
       url: boardSyncUrl(boardId, window.location),
+      onState: (state: ConnectionState) => setConnection(state),
       // The browser socket has the same members the provider uses; its event handler types are
       // wider, so the adapter is a cast at this single point.
       createSocket: (url) => new WebSocket(url) as unknown as SocketLike,
@@ -107,10 +120,29 @@ export function CanvasEditor({ boardId }: { boardId?: string }) {
     provider.start();
     return () => provider.stop();
   }, [boardId, session]);
-  const surfaceRef = useRef<HTMLDivElement>(null);
-  const pointersRef = useRef(new Map<number, Point>());
-  const pinchRef = useRef<PinchStart | null>(null);
-  const [size, setSize] = useState({ width: 800, height: 600 });
+
+  // Publishes this participant's presence, and keeps it fresh and expires stale participants while
+  // the editor is open.
+  useEffect(() => {
+    if (!userId || !userName) {
+      return;
+    }
+    const controller = new PresenceController(awareness, { id: userId, name: userName }, {
+      timers: browserTimers,
+    });
+    presenceRef.current = controller;
+    controller.start();
+    const stopMaintenance = maintainAwareness(awareness, { timers: browserTimers });
+    return () => {
+      stopMaintenance();
+      controller.stop();
+      presenceRef.current = null;
+    };
+  }, [awareness, userId, userName]);
+
+  useEffect(() => {
+    presenceRef.current?.setSelection(state.selectedIds);
+  }, [state.selectedIds]);
 
   useEffect(() => {
     const element = surfaceRef.current;
@@ -151,7 +183,7 @@ export function CanvasEditor({ boardId }: { boardId?: string }) {
     };
     element.addEventListener('wheel', onWheel, { passive: false });
     return () => element.removeEventListener('wheel', onWheel);
-  }, []);
+  }, [dispatch]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -206,7 +238,7 @@ export function CanvasEditor({ boardId }: { boardId?: string }) {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, []);
+  }, [dispatch]);
 
   // Pointer handling tracks every active pointer so two fingers can pinch and pan. The reducer
   // only ever sees a single pointer's gesture, plus viewport updates from pinching.
@@ -252,6 +284,8 @@ export function CanvasEditor({ boardId }: { boardId?: string }) {
     }
     if (pointers.size === 1) {
       dispatch({ type: 'pointerMove', screen });
+      // Presence is in world coordinates, so the cursor is right at any view's zoom.
+      presenceRef.current?.setCursor(screenToWorld(screen, state.viewport));
     }
   };
 
@@ -291,6 +325,8 @@ export function CanvasEditor({ boardId }: { boardId?: string }) {
         canEditSelection={state.selectedIds.length > 0}
         canUndo={state.undoState.canUndo}
         canRedo={state.undoState.canRedo}
+        participants={participants}
+        connection={connection}
         onToolChange={(tool) => dispatch({ type: 'setTool', tool })}
         onZoomIn={() => dispatch({ type: 'zoom', factor: ZOOM_STEP, anchor: center })}
         onZoomOut={() => dispatch({ type: 'zoom', factor: 1 / ZOOM_STEP, anchor: center })}
@@ -312,6 +348,7 @@ export function CanvasEditor({ boardId }: { boardId?: string }) {
           onPointerMove={onPointerMove}
           onPointerUp={(event) => endPointer(event, false)}
           onPointerCancel={(event) => endPointer(event, true)}
+          onPointerLeave={() => presenceRef.current?.setCursor(null)}
           onDoubleClick={(event) =>
             dispatch({
               type: 'doubleClick',
@@ -338,6 +375,12 @@ export function CanvasEditor({ boardId }: { boardId?: string }) {
             hiddenTextId={state.editingTextId}
           />
         </div>
+        <PresenceOverlay
+          participants={participants}
+          objects={state.objects}
+          viewport={state.viewport}
+          size={size}
+        />
         {editingText && editorPosition && (
           <textarea
             className="text-overlay"

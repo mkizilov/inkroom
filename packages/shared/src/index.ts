@@ -4,5 +4,7 @@ export * from './canvas';
 export * from './canvas-operations';
 export * from './sync-protocol';
 export * from './yjs-model';
+export * from './awareness';
+export * from './presence';
 export { SyncClient, type SyncClientOptions } from './sync-client';
 export * from './health';
