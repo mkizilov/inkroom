@@ -41,7 +41,8 @@ unsupported versions.
 ## Editing operations
 
 Every change to the document is an operation on objects addressed by id. The operations are
-defined in `packages/shared/src/canvas-operations.ts`:
+defined in `packages/shared/src/canvas-operations.ts` and are written to the Yjs document by
+`apps/web/src/canvas/doc/model.ts`:
 
 | Operation | Meaning                                                                       |
 | --------- | ----------------------------------------------------------------------------- |
@@ -55,19 +56,23 @@ not fit the document. `diffDocuments(before, after)` produces the operations tha
 into another, and `diffDocuments(after, before)` is the inverse. Undo applies the inverse; redo
 applies the forward operations.
 
-These are the units that a collaborative session would send and merge. Nothing sends them yet, and
-the reducer applies them locally only.
+These are the units that a collaborative session would send and merge. Nothing sends them yet. The
+Yjs document receives them, and each batch is one transaction.
 
 ## History
 
-Each undoable step stores both directions of the change, and the history keeps the last 200 steps.
+The document is a Yjs document, and undo and redo use `Y.UndoManager`. The steps below describe
+what the user sees. The mechanism is in [yjs-document.md](yjs-document.md).
+
+Each undoable step is one or more local transactions.
 
 - A pointer drag (move, resize, or drawing a shape or stroke) is one step, recorded on release.
   A click that moves nothing records nothing.
 - A text session is one step, from the moment editing starts until it ends, however many
   characters were typed. An empty new text object leaves no trace.
 - Delete, paste, duplicate, cut, nudge, and layer changes are each one step.
-- A new change discards the redo steps.
+- A new local change discards the redo steps.
+- Remote changes are never undone by the local user, and they are not undo steps for this user.
 - Undo or redo during a drag cancels the drag first. The next press undoes a step.
 - Keyboard commands and toolbar buttons end an active text session and cancel an active drag
   before they act, so they always work on the committed document.
@@ -185,6 +190,12 @@ Unit tests:
   rules, and the scaling of each object type between boxes.
 - `apps/web/src/canvas/history.test.ts`: recording, undo, redo, and discarding of redo steps.
 - `apps/web/src/canvas/status.test.ts`: the status line text.
+- `apps/web/src/canvas/doc/model.test.ts`: the Yjs storage layout, round trips for every object type,
+  dense z-order values, rejected operations, and malformed entries.
+- `apps/web/src/canvas/doc/canvas-document.test.ts`: local undo and redo, step boundaries, remote
+  updates staying out of undo, convergence in different orders, and concurrent edits.
+- `apps/web/src/canvas/session.test.ts`: the view and the document staying equal after each step,
+  and two connected sessions.
 - `apps/web/src/canvas/editor.test.ts`: drawing, selection, moving, resizing, group transforms,
   marquee, panning, zooming, text editing, copy and paste, layer order, nudging, undo and redo,
   and interactions between text, freehand strokes and transformations. Includes checks that drawn
@@ -205,7 +216,8 @@ pixels.
 
 ## Limitations
 
-- No collaboration. The operations are designed for it, but nothing sends or merges them.
+- No collaboration transport. Updates are produced and consumed locally, and no WebSocket exists.
+  See [yjs-document.md](yjs-document.md) for the known limits of the document model.
 - No persistence. Changes stay on the page and are lost on navigation.
 - Objects cannot be rotated, recoloured, or given a fill colour. Colours are fixed (`#1f2328`,
   width 2).

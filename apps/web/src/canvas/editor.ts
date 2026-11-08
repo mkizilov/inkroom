@@ -1,12 +1,13 @@
 import {
   MAX_TEXT_LENGTH,
+  diffDocuments,
   type CanvasObject,
+  type CanvasOperation,
   type PenObject,
   type Point,
   type TextObject,
 } from '@inkroom/shared';
 import { normalizeRect, objectsInRect, pickObject, type Rect } from './geometry';
-import { EMPTY_HISTORY, recordChange, redoChange, undoChange, type History } from './history';
 import { handleAt, resizeBox, selectionBounds, transformObjects, type Handle } from './transform';
 import {
   INITIAL_VIEWPORT,
@@ -50,8 +51,20 @@ export interface ClipboardState {
   pasteCount: number;
 }
 
-// A pointer gesture. Move, resize and draw keep the document from the gesture's start so the
-// preview can be recomputed on every pointer move, and so cancelling restores it exactly.
+// Document writes produced by the reducer. The session applies them to the Yjs document in order.
+// A write with boundary true starts a new undo step; false joins the step that is open.
+export type OutboxEntry =
+  | { kind: 'write'; operations: CanvasOperation[]; boundary: boolean }
+  | { kind: 'undo' }
+  | { kind: 'redo' };
+
+export interface UndoState {
+  canUndo: boolean;
+  canRedo: boolean;
+}
+
+// A pointer gesture. Move and resize write their preview to the document as it changes, and keep
+// the starting objects so a cancel can restore them. Drawing is not written until release.
 type Gesture =
   | { kind: 'pan'; startScreen: Point; startViewport: Viewport }
   | {
@@ -69,9 +82,10 @@ type Gesture =
       startBox: Rect;
     }
   | { kind: 'marquee'; startWorld: Point; base: string[] }
-  | { kind: 'draw'; startWorld: Point; startObjects: CanvasObject[] };
+  | { kind: 'draw'; startWorld: Point };
 
 export interface EditorState {
+  // The editor's view of the document. Every change to it is also written to the document.
   objects: CanvasObject[];
   selectedIds: string[];
   viewport: Viewport;
@@ -81,10 +95,10 @@ export interface EditorState {
   marquee: Rect | null;
   gesture: Gesture | null;
   editingTextId: string | null;
-  // The document before the active text session, so the whole session is one undo step.
-  textSnapshot: CanvasObject[] | null;
-  history: History;
   clipboard: ClipboardState | null;
+  outbox: OutboxEntry[];
+  startsStep: boolean;
+  undoState: UndoState;
 }
 
 // `makeId` is supplied by the caller, so the reducer stays pure and tests can be deterministic.
@@ -111,7 +125,9 @@ export type EditorAction =
   | { type: 'nudge'; dx: number; dy: number }
   | { type: 'reorder'; direction: LayerDirection }
   | { type: 'undo' }
-  | { type: 'redo' };
+  | { type: 'redo' }
+  // The document changed outside the editor, for example through a remote update or an undo.
+  | { type: 'syncObjects'; objects: CanvasObject[] };
 
 type PointerDownAction = Extract<EditorAction, { type: 'pointerDown' }>;
 
@@ -126,9 +142,10 @@ export function createEditorState(): EditorState {
     marquee: null,
     gesture: null,
     editingTextId: null,
-    textSnapshot: null,
-    history: EMPTY_HISTORY,
     clipboard: null,
+    outbox: [],
+    startsStep: true,
+    undoState: { canUndo: false, canRedo: false },
   };
 }
 
@@ -191,35 +208,65 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     case 'reorder':
       return reorder(settle(state), action.direction);
     case 'undo':
-      return undo(state);
+      return requestHistory(state, 'undo');
     case 'redo':
-      return redo(state);
+      return requestHistory(state, 'redo');
+    case 'syncObjects':
+      return syncObjects(state, action.objects);
   }
 }
 
-// Ends the active text session and cancels any pointer gesture, so that a keyboard command
-// acts on the committed document.
+// Ends the active text session and cancels any pointer gesture, so that a keyboard command acts
+// on the committed document.
 function settle(state: EditorState): EditorState {
   return cancelGesture(finishText(state));
 }
 
-// Records a change as one undo step. Does nothing when the document is unchanged.
-function commit(
+// Replaces the view and queues the operations that turn `before` into `after`. Nothing is queued
+// when the change is empty.
+function emit(
+  state: EditorState,
+  before: readonly CanvasObject[],
+  after: readonly CanvasObject[],
+  boundary: boolean,
+): EditorState {
+  const operations = diffDocuments(before, after);
+  if (operations.length === 0) {
+    return { ...state, objects: [...after] };
+  }
+  return {
+    ...state,
+    objects: [...after],
+    outbox: [...state.outbox, { kind: 'write', operations, boundary }],
+    startsStep: false,
+  };
+}
+
+// For writes inside a gesture or a text edit: the first write of the step starts it.
+function emitStep(
   state: EditorState,
   before: readonly CanvasObject[],
   after: readonly CanvasObject[],
 ): EditorState {
-  return { ...state, objects: [...after], history: recordChange(state.history, before, after) };
+  return emit(state, before, after, state.startsStep);
+}
+
+// For discrete actions (delete, paste, nudge, ...): each one is its own undo step.
+function emitDiscrete(
+  state: EditorState,
+  before: readonly CanvasObject[],
+  after: readonly CanvasObject[],
+): EditorState {
+  return emit(state, before, after, true);
 }
 
 function cancelGesture(state: EditorState): EditorState {
   const gesture = state.gesture;
   const idle = { ...state, gesture: null, draft: null, marquee: null };
-  if (
-    gesture &&
-    (gesture.kind === 'move' || gesture.kind === 'resize' || gesture.kind === 'draw')
-  ) {
-    return { ...idle, objects: gesture.startObjects };
+  if (gesture?.kind === 'move' || gesture?.kind === 'resize') {
+    // The preview was written as it changed, so cancelling writes the starting objects back. The
+    // write joins the open step, so the drag leaves no separate undo step.
+    return emit(idle, state.objects, gesture.startObjects, false);
   }
   return idle;
 }
@@ -264,6 +311,7 @@ function beginSelection(state: EditorState, world: Point, shift: boolean): Edito
   if (box && handle) {
     return {
       ...state,
+      startsStep: true,
       gesture: {
         kind: 'resize',
         handle,
@@ -305,6 +353,7 @@ function beginSelection(state: EditorState, world: Point, shift: boolean): Edito
   return {
     ...state,
     selectedIds,
+    startsStep: true,
     gesture: {
       kind: 'move',
       startWorld: world,
@@ -325,14 +374,8 @@ function createText(state: EditorState, id: string, world: Point): EditorState {
     fontSize: DEFAULT_FONT_SIZE,
     ...baseStyle(),
   };
-  return {
-    ...state,
-    objects: [...state.objects, text],
-    selectedIds: [id],
-    editingTextId: id,
-    textSnapshot: state.objects,
-    gesture: null,
-  };
+  const next = { ...state, selectedIds: [id], editingTextId: id, gesture: null };
+  return emitDiscrete(next, state.objects, [...state.objects, text]);
 }
 
 function baseStyle() {
@@ -385,7 +428,8 @@ function startDraft(state: EditorState, draft: CanvasObject, start: Point): Edit
     ...state,
     draft,
     selectedIds: [],
-    gesture: { kind: 'draw', startWorld: start, startObjects: state.objects },
+    startsStep: true,
+    gesture: { kind: 'draw', startWorld: start },
   };
 }
 
@@ -411,17 +455,13 @@ function pointerMove(state: EditorState, screen: Point): EditorState {
         x: gesture.startBox.x + dx,
         y: gesture.startBox.y + dy,
       };
-      return {
-        ...state,
-        objects: transformObjects(gesture.startObjects, gesture.ids, gesture.startBox, target),
-      };
+      const preview = transformObjects(gesture.startObjects, gesture.ids, gesture.startBox, target);
+      return emitStep(state, state.objects, preview);
     }
     case 'resize': {
       const box = resizeBox(gesture.startBox, gesture.handle, world, MIN_BOX_SIZE);
-      return {
-        ...state,
-        objects: transformObjects(gesture.startObjects, gesture.ids, gesture.startBox, box),
-      };
+      const preview = transformObjects(gesture.startObjects, gesture.ids, gesture.startBox, box);
+      return emitStep(state, state.objects, preview);
     }
     case 'marquee': {
       const rect = normalizeRect(gesture.startWorld, world);
@@ -471,17 +511,14 @@ function updateDraft(
   return draft;
 }
 
-// Commits the gesture. Move and resize record the change from the gesture's start, so a drag is
-// one undo step, and a click that moves nothing records nothing.
+// Move and resize have already written their preview, so release only ends the gesture. A drawn
+// shape is written now, as one new object.
 function endGesture(state: EditorState): EditorState {
   const gesture = state.gesture;
   const idle = { ...state, gesture: null, draft: null, marquee: null };
-  if (gesture?.kind === 'move' || gesture?.kind === 'resize') {
-    return commit(idle, gesture.startObjects, state.objects);
-  }
   if (gesture?.kind === 'draw' && state.draft && isMeaningful(state.draft)) {
-    const after = [...gesture.startObjects, state.draft];
-    return { ...commit(idle, gesture.startObjects, after), selectedIds: [state.draft.id] };
+    const created = emitStep(idle, state.objects, [...state.objects, state.draft]);
+    return { ...created, selectedIds: [state.draft.id] };
   }
   return idle;
 }
@@ -516,37 +553,36 @@ function doubleClick(state: EditorState, screen: Point): EditorState {
     ...current,
     selectedIds: [hit.id],
     editingTextId: hit.id,
-    textSnapshot: current.objects,
+    startsStep: true,
   };
 }
 
-// Text edits are applied live so the overlay and the canvas agree. The session is recorded when
-// it finishes.
+// Text edits are written as they happen, so the document and any other replica follow typing.
+// Keystrokes join the step that the text session opened.
 function changeText(state: EditorState, id: string, text: string): EditorState {
   const clipped = text.slice(0, MAX_TEXT_LENGTH);
-  return {
-    ...state,
-    objects: state.objects.map((object) =>
-      object.id === id && object.type === 'text' ? { ...object, text: clipped } : object,
-    ),
-  };
+  const objects = state.objects.map((object) =>
+    object.id === id && object.type === 'text' ? { ...object, text: clipped } : object,
+  );
+  return emitStep(state, state.objects, objects);
 }
 
-// Leaves text editing and records the session as one step. A text object left empty is removed,
-// so stray clicks do not leave invisible objects behind.
+// Leaves text editing. A text object left empty is removed, so stray clicks do not leave
+// invisible objects behind.
 function finishText(state: EditorState): EditorState {
   if (!state.editingTextId) {
     return state;
   }
   const id = state.editingTextId;
   const target = state.objects.find((object) => object.id === id);
-  const empty = target?.type === 'text' && target.text.trim() === '';
-  const objects = empty ? state.objects.filter((object) => object.id !== id) : state.objects;
-  const selectedIds = empty
-    ? state.selectedIds.filter((selected) => selected !== id)
-    : state.selectedIds;
-  const stopped = { ...state, objects, selectedIds, editingTextId: null, textSnapshot: null };
-  return commit(stopped, state.textSnapshot ?? state.objects, objects);
+  const stopped = { ...state, editingTextId: null };
+  if (target?.type === 'text' && target.text.trim() === '') {
+    const objects = state.objects.filter((object) => object.id !== id);
+    const selectedIds = state.selectedIds.filter((selected) => selected !== id);
+    const removed = { ...stopped, selectedIds };
+    return emit(removed, state.objects, objects, false);
+  }
+  return stopped;
 }
 
 function copySelection(state: EditorState): EditorState {
@@ -572,8 +608,9 @@ function paste(state: EditorState, makeId: () => string): EditorState {
   }
   const offset = PASTE_OFFSET * (clipboard.pasteCount + 1);
   const copies = clipboard.objects.map((object) => copyAt(object, offset, offset, makeId()));
+  const written = emitDiscrete(state, state.objects, [...state.objects, ...copies]);
   return {
-    ...commit(state, state.objects, [...state.objects, ...copies]),
+    ...written,
     selectedIds: copies.map((copy) => copy.id),
     clipboard: { ...clipboard, pasteCount: clipboard.pasteCount + 1 },
   };
@@ -587,10 +624,8 @@ function duplicate(state: EditorState, makeId: () => string): EditorState {
     return state;
   }
   const copies = sources.map((object) => copyAt(object, PASTE_OFFSET, PASTE_OFFSET, makeId()));
-  return {
-    ...commit(state, state.objects, [...state.objects, ...copies]),
-    selectedIds: copies.map((copy) => copy.id),
-  };
+  const written = emitDiscrete(state, state.objects, [...state.objects, ...copies]);
+  return { ...written, selectedIds: copies.map((copy) => copy.id) };
 }
 
 function deleteSelected(state: EditorState): EditorState {
@@ -599,7 +634,7 @@ function deleteSelected(state: EditorState): EditorState {
   }
   const doomed = new Set(state.selectedIds);
   const objects = state.objects.filter((object) => !doomed.has(object.id));
-  return { ...commit(state, state.objects, objects), selectedIds: [] };
+  return { ...emitDiscrete(state, state.objects, objects), selectedIds: [] };
 }
 
 function nudge(state: EditorState, dx: number, dy: number): EditorState {
@@ -610,7 +645,7 @@ function nudge(state: EditorState, dx: number, dy: number): EditorState {
   const objects = state.objects.map((object) =>
     selected.has(object.id) ? { ...object, x: object.x + dx, y: object.y + dy } : object,
   );
-  return commit(state, state.objects, objects);
+  return emitDiscrete(state, state.objects, objects);
 }
 
 function reorder(state: EditorState, direction: LayerDirection): EditorState {
@@ -618,7 +653,7 @@ function reorder(state: EditorState, direction: LayerDirection): EditorState {
     return state;
   }
   const selected = new Set(state.selectedIds);
-  return commit(state, state.objects, reorderLayers(state.objects, selected, direction));
+  return emitDiscrete(state, state.objects, reorderLayers(state.objects, selected, direction));
 }
 
 // Moves the selected objects in z-order. Forward and backward step each selected object past the
@@ -668,34 +703,31 @@ function swapAt(objects: CanvasObject[], a: number, b: number): void {
   }
 }
 
-// While a pointer gesture is in progress, the first undo or redo only cancels it. Otherwise it
-// would also step through history, which the user did not ask for.
-function undo(state: EditorState): EditorState {
+// Undo and redo are applied by the document, not here. While a pointer gesture is in progress,
+// the first undo or redo only cancels the gesture.
+function requestHistory(state: EditorState, kind: 'undo' | 'redo'): EditorState {
   if (state.gesture) {
     return cancelGesture(state);
   }
   const settled = finishText(state);
-  const step = undoChange(settled.objects, settled.history);
-  if (!step) {
-    return settled;
-  }
-  return withExistingSelection({ ...settled, objects: step.objects, history: step.history });
+  const entry: OutboxEntry = kind === 'undo' ? { kind: 'undo' } : { kind: 'redo' };
+  return { ...settled, startsStep: true, outbox: [...settled.outbox, entry] };
 }
 
-function redo(state: EditorState): EditorState {
-  if (state.gesture) {
-    return cancelGesture(state);
-  }
-  const settled = finishText(state);
-  const step = redoChange(settled.objects, settled.history);
-  if (!step) {
-    return settled;
-  }
-  return withExistingSelection({ ...settled, objects: step.objects, history: step.history });
-}
-
-// Undo and redo can remove objects, so the selection keeps only ids that still exist.
-function withExistingSelection(state: EditorState): EditorState {
-  const present = new Set(state.objects.map((object) => object.id));
-  return { ...state, selectedIds: state.selectedIds.filter((id) => present.has(id)) };
+// The document changed outside the editor. The view adopts it, and anything that refers to an
+// object that no longer exists is dropped. An in-progress gesture ends, because its starting
+// objects may be stale.
+function syncObjects(state: EditorState, objects: CanvasObject[]): EditorState {
+  const present = new Set(objects.map((object) => object.id));
+  const editing = state.editingTextId !== null && present.has(state.editingTextId);
+  return {
+    ...state,
+    objects: [...objects],
+    selectedIds: state.selectedIds.filter((id) => present.has(id)),
+    editingTextId: editing ? state.editingTextId : null,
+    gesture: null,
+    draft: null,
+    marquee: null,
+    startsStep: true,
+  };
 }

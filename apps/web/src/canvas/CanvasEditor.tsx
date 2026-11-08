@@ -1,13 +1,14 @@
 import {
   useEffect,
-  useReducer,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import type { Point, TextObject } from '@inkroom/shared';
 import { CanvasScene } from './CanvasScene';
-import { createEditorState, editorReducer, TOOL_SHORTCUTS, type EditorAction } from './editor';
+import { TOOL_SHORTCUTS, type EditorAction } from './editor';
+import { EditorSession } from './session';
+import { useEditorState } from './useEditorState';
 import { describeCanvas } from './status';
 import { Toolbar } from './Toolbar';
 import { selectionBounds } from './transform';
@@ -83,7 +84,11 @@ function pinchFrom(points: Point[]): PinchSample | null {
 }
 
 export function CanvasEditor() {
-  const [state, dispatch] = useReducer(editorReducer, undefined, createEditorState);
+  // The session owns the document (a Yjs document) for this editor instance. The view and the
+  // document stay in step through the session; see session.ts.
+  const [session] = useState(() => new EditorSession());
+  const state = useEditorState(session);
+  const dispatch = session.dispatch;
   const surfaceRef = useRef<HTMLDivElement>(null);
   const pointersRef = useRef(new Map<number, Point>());
   const pinchRef = useRef<PinchStart | null>(null);
@@ -266,8 +271,8 @@ export function CanvasEditor() {
         scale={state.viewport.scale}
         status={describeCanvas(state.objects, state.selectedIds)}
         canEditSelection={state.selectedIds.length > 0}
-        canUndo={state.history.past.length > 0}
-        canRedo={state.history.future.length > 0}
+        canUndo={state.undoState.canUndo}
+        canRedo={state.undoState.canRedo}
         onToolChange={(tool) => dispatch({ type: 'setTool', tool })}
         onZoomIn={() => dispatch({ type: 'zoom', factor: ZOOM_STEP, anchor: center })}
         onZoomOut={() => dispatch({ type: 'zoom', factor: 1 / ZOOM_STEP, anchor: center })}
