@@ -1,6 +1,7 @@
 import { Arrow, Ellipse, Group, Layer, Line, Rect, Stage, Text } from 'react-konva';
 import type { CanvasObject } from '@inkroom/shared';
 import { objectBounds, type Rect as WorldRect } from './geometry';
+import { planScene } from './scene-plan';
 import { HANDLES, HANDLE_SIZE_PX, handlePoint } from './transform';
 import type { Viewport } from './viewport';
 
@@ -120,7 +121,8 @@ export function CanvasScene({
   marquee,
   hiddenTextId,
 }: CanvasSceneProps) {
-  const selected = objects.filter((object) => selectedIds.includes(object.id));
+  // Only what is on screen is drawn: objects outside the view are not nodes at all.
+  const plan = planScene(objects, selectedIds, viewport, width, height, hiddenTextId);
   // Handles keep a constant on-screen size as the zoom changes.
   const handleSize = HANDLE_SIZE_PX / viewport.scale;
 
@@ -135,15 +137,13 @@ export function CanvasScene({
       listening={false}
     >
       <Layer listening={false}>
-        {objects
-          .filter((object) => object.id !== hiddenTextId)
-          .map((object) => renderObject(object, object.id))}
+        {plan.visible.map((object) => renderObject(object, object.id))}
         {draft && (
           <Group opacity={0.6} listening={false}>
             {renderObject(draft, draft.id)}
           </Group>
         )}
-        {selected.map((object) => {
+        {plan.selectedVisible.map((object) => {
           const bounds = objectBounds(object);
           return (
             <Rect

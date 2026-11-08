@@ -48,17 +48,22 @@ function expandRect(rect: Rect, amount: number): Rect {
   };
 }
 
-function boundsOf(points: Point[]): Rect {
-  const xs = points.map((point) => point.x);
-  const ys = points.map((point) => point.y);
-  const minX = Math.min(...xs);
-  const minY = Math.min(...ys);
-  return {
-    x: minX,
-    y: minY,
-    width: Math.max(...xs) - minX,
-    height: Math.max(...ys) - minY,
-  };
+// The extent of points, each shifted by an offset. Reads every point once and allocates nothing: a
+// freehand stroke can have thousands of points, and this runs on every render and every marquee move.
+function boundsOf(points: readonly Point[], offsetX = 0, offsetY = 0): Rect {
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const point of points) {
+    const x = offsetX + point.x;
+    const y = offsetY + point.y;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
 export function distanceToSegment(point: Point, a: Point, b: Point): number {
@@ -92,15 +97,30 @@ function absolutePoints(object: { x: number; y: number; points: Point[] }): Poin
   return object.points.map((point) => ({ x: object.x + point.x, y: object.y + point.y }));
 }
 
+// Extents are read on every render and on every marquee move, and objects are never changed in place
+// (an edit makes a new object). So each object's extent is computed once and kept, frozen, so a
+// mistaken write to it fails instead of corrupting later reads.
+const geometricCache = new WeakMap<CanvasObject, Rect>();
+
 // The object's own extent, without stroke padding. Selection boxes and resizing use this, so a
 // box resized to 100 by 60 gives an object whose geometry is exactly 100 by 60.
 export function geometricBounds(object: CanvasObject): Rect {
+  const cached = geometricCache.get(object);
+  if (cached) {
+    return cached;
+  }
+  const bounds = Object.freeze(computeGeometricBounds(object));
+  geometricCache.set(object, bounds);
+  return bounds;
+}
+
+function computeGeometricBounds(object: CanvasObject): Rect {
   switch (object.type) {
     case 'rectangle':
     case 'ellipse':
       return { x: object.x, y: object.y, width: object.width, height: object.height };
     case 'pen':
-      return boundsOf(absolutePoints(object));
+      return boundsOf(object.points, object.x, object.y);
     case 'line':
     case 'arrow':
       return boundsOf([
@@ -134,6 +154,11 @@ export function hitTest(object: CanvasObject, point: Point, tolerance: number): 
   switch (object.type) {
     case 'pen': {
       const reach = tolerance + object.strokeWidth / 2;
+      // A stroke has no point farther than `reach` outside its bounds, so most strokes are rejected
+      // here without measuring each segment.
+      if (!containsPoint(expandRect(geometricBounds(object), reach), point)) {
+        return false;
+      }
       return distanceToPolyline(point, absolutePoints(object)) <= reach;
     }
     case 'line':
