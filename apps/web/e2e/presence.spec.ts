@@ -73,7 +73,7 @@ test('participants and cursors appear in another browser, and leave when it disc
     // Each browser sees itself and the other participant.
     await expect(participants(a)).toHaveCount(2, { timeout: 15_000 });
     await expect(participants(b)).toHaveCount(2, { timeout: 15_000 });
-    await expect(b.getByText('Connected')).toBeVisible();
+    await expect(b.getByText('Online')).toBeVisible();
 
     // A moves the pointer across the canvas; B shows the cursor, and it moves.
     const origin = await canvasOrigin(a);

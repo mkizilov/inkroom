@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
 import {
   Awareness,
+  encodeAck,
   encodeAwareness,
+  encodeRole,
   encodeSyncStep1,
+  encodeSyncStep2,
   encodeSyncUpdate,
 } from '@inkroom/shared';
 import { CanvasDocument } from '../doc/canvas-document';
@@ -26,7 +29,7 @@ class FakeSocket implements SocketLike {
   readonly sent: Uint8Array[] = [];
   onopen: ((event: unknown) => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
-  onclose: ((event: { code: number }) => void) | null = null;
+  onclose: ((event: { code: number; reason?: string }) => void) | null = null;
   onerror: ((event: unknown) => void) | null = null;
 
   send(data: Uint8Array): void {
@@ -42,9 +45,9 @@ class FakeSocket implements SocketLike {
   receive(frame: Uint8Array): void {
     this.onmessage?.({ data: new Uint8Array(frame).buffer });
   }
-  drop(code: number): void {
+  drop(code: number, reason = ''): void {
     this.readyState = CLOSED;
-    this.onclose?.({ code });
+    this.onclose?.({ code, reason });
   }
 }
 
@@ -76,6 +79,7 @@ function harness() {
   const sockets: FakeSocket[] = [];
   const timers = new ManualTimers();
   const states: ConnectionState[] = [];
+  const revoked: string[] = [];
   const document = new CanvasDocument();
   const provider = new SyncProvider({
     document,
@@ -90,8 +94,9 @@ function harness() {
     minBackoffMs: 100,
     maxBackoffMs: 1000,
     onState: (state) => states.push(state),
+    onRevoked: (reason) => revoked.push(reason),
   });
-  return { provider, document, sockets, timers, states };
+  return { provider, document, sockets, timers, states, revoked };
 }
 
 function rectangle(n: number) {
@@ -108,14 +113,17 @@ function rectangle(n: number) {
 }
 
 describe('sync provider connection', () => {
-  it('opens a socket for binary frames, sends its state vector, and reports connected', () => {
+  it('opens a socket for binary frames, sends its state vector, and reports connected once the server answers', () => {
     const { provider, sockets, states } = harness();
     provider.start();
     sockets[0]?.open();
 
     expect(sockets[0]?.binaryType).toBe('arraybuffer');
     expect(sockets[0]?.sent[0]?.[0]).toBe(0);
-    expect(states).toEqual(['connecting', 'connected']);
+    expect(states).toEqual(['connecting', 'syncing']);
+
+    sockets[0]?.receive(encodeSyncStep2(Y.encodeStateAsUpdate(new Y.Doc())));
+    expect(states).toEqual(['connecting', 'syncing', 'connected']);
     provider.stop();
   });
 
@@ -193,6 +201,9 @@ describe('sync provider connection', () => {
     sockets[1]?.open();
 
     expect(states).toContain('offline');
+    expect(provider.connectionState).toBe('syncing');
+
+    sockets[1]?.receive(encodeSyncStep2(Y.encodeStateAsUpdate(new Y.Doc())));
     expect(provider.connectionState).toBe('connected');
     provider.stop();
   });
@@ -322,5 +333,70 @@ describe('presence over the sync socket', () => {
 
     expect(socket.sent.length).toBe(before);
     provider.stop();
+  });
+});
+
+describe('pending changes and revocation', () => {
+  it('counts a local change as pending until the server stores it', () => {
+    const { provider, document, sockets } = harness();
+    provider.start();
+    const socket = sockets[0] as FakeSocket;
+    socket.open();
+    socket.receive(encodeSyncStep2(Y.encodeStateAsUpdate(new Y.Doc())));
+
+    document.apply([{ type: 'insert', index: 0, objects: [rectangle(1)] }], { boundary: true });
+    expect(provider.connectionState).toBe('syncing');
+
+    socket.receive(encodeAck(1));
+    expect(provider.connectionState).toBe('connected');
+    provider.stop();
+  });
+
+  it('keeps changes made offline pending until the server stores them after reconnecting', () => {
+    const { provider, document, sockets, timers } = harness();
+    provider.start();
+    sockets[0]?.open();
+    sockets[0]?.receive(encodeSyncStep2(Y.encodeStateAsUpdate(new Y.Doc())));
+    sockets[0]?.drop(1006);
+
+    document.apply([{ type: 'insert', index: 0, objects: [rectangle(2)] }], { boundary: true });
+    timers.fireNext();
+    const reconnect = sockets.at(-1) as FakeSocket;
+    reconnect.open();
+    // The server asks what the client holds. The client's answer carries the offline change.
+    reconnect.receive(encodeSyncStep1(Y.encodeStateVector(new Y.Doc())));
+    reconnect.receive(encodeSyncStep2(Y.encodeStateAsUpdate(new Y.Doc())));
+    expect(provider.connectionState).toBe('syncing');
+
+    reconnect.receive(encodeAck(1));
+    expect(provider.connectionState).toBe('connected');
+    provider.stop();
+  });
+
+  it('clears the pending count when the server makes this client a viewer', () => {
+    const { provider, document, sockets } = harness();
+    provider.start();
+    const socket = sockets[0] as FakeSocket;
+    socket.open();
+    socket.receive(encodeSyncStep2(Y.encodeStateAsUpdate(new Y.Doc())));
+    document.apply([{ type: 'insert', index: 0, objects: [rectangle(1)] }], { boundary: true });
+    expect(provider.connectionState).toBe('syncing');
+
+    socket.receive(encodeRole('viewer'));
+
+    expect(provider.connectionState).toBe('connected');
+    provider.stop();
+  });
+
+  it('reports a revocation with the reason the server gave, and does not reconnect', () => {
+    const { provider, sockets, timers, revoked } = harness();
+    provider.start();
+    sockets[0]?.open();
+
+    sockets[0]?.drop(POLICY_VIOLATION_CLOSE, 'access revoked');
+
+    expect(revoked).toEqual(['access revoked']);
+    expect(timers.pending.size).toBe(0);
+    expect(provider.connectionState).toBe('stopped');
   });
 });

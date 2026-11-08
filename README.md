@@ -124,6 +124,9 @@ Run from the repository root.
   acknowledged, boards are rebuilt from the store after a restart, compaction folds the log into
   revision snapshots, and owners can restore a revision. See
   [docs/persistence.md](docs/persistence.md).
+- **Offline editing**: a board opened online keeps a copy in the browser (IndexedDB, per user). Edits
+  made offline survive a reload, the app opens offline through a service worker, and changes merge
+  with other people's on reconnect. See [docs/offline.md](docs/offline.md).
 - **Live presence**: remote cursors in world coordinates, participant names and colours, remote
   selection outlines, a participant list and connection status in the toolbar. Presence is
   ephemeral and never stored. See [docs/presence.md](docs/presence.md).
@@ -170,7 +173,7 @@ Node 22. The `pnpm-lock.yaml` file must be committed for the frozen install to s
   database connectivity check, Docker Compose PostgreSQL, CI workflow, database schema with
   versioned migrations, repository modules, seed data, integration tests, authentication
   (register, login, logout, current user, session expiry and revocation, rate limiting, CSRF
-  origin checks) with login and registration pages, and board management with a dashboard, and sharing with role-based permissions.
+  origin checks) with login and registration pages, and board management with a dashboard, sharing with role-based permissions, and offline editing with a device copy.
 - Not implemented: a revision browser or restore control in the web app, multi-process sync and
   presence, viewport outlines for other
   participants, OAuth or social sign-in, email verification, password reset, production Docker

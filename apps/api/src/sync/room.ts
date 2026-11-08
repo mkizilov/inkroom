@@ -226,10 +226,10 @@ export class Room {
 
     const sync = message.sync;
     if (sync.kind === 'step1') {
-      // The client describes what it has. Send what it lacks, and ask for what the room lacks.
-      const missing = Y.encodeStateAsUpdate(this.doc, sync.stateVector);
-      from.send(encodeSyncStep2(missing));
-      from.send(encodeSyncStep1(Y.encodeStateVector(this.doc)));
+      // The client describes what it has, so send what it lacks. The client answers the room's join
+      // with what the room lacks. A state vector is never answered with another one, or the two
+      // sides would keep answering each other.
+      from.send(encodeSyncStep2(Y.encodeStateAsUpdate(this.doc, sync.stateVector)));
       return;
     }
     if (from.readOnly) {

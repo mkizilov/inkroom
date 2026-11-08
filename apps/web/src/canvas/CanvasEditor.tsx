@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { boardRoleSchema, type BoardRole, type Point, type TextObject } from '@inkroom/shared';
+import { LocalBoard } from '../offline/local-board';
+import type { LocalStore } from '../offline/local-store';
 import { CanvasScene } from './CanvasScene';
 import { TOOL_SHORTCUTS, type EditorAction } from './editor';
 import { PresenceOverlay } from './presence/PresenceOverlay';
@@ -37,6 +39,30 @@ const ARROW_DIRECTIONS: Readonly<Record<string, readonly [number, number]>> = {
   ArrowUp: [0, -1],
   ArrowDown: [0, 1],
 };
+
+// The server's reasons for ending this user's access to the board. The copy on this device is deleted
+// then, so nothing the user can no longer open stays behind.
+const ACCESS_ENDED_REASONS = new Set([
+  'access revoked',
+  'board was deleted',
+  'board not found',
+  'not permitted to change this board',
+]);
+const ACCESS_ENDED_NOTICE =
+  'Your access to this board has ended, so its copy was deleted from this browser.';
+const SESSION_ENDED_NOTICE =
+  'Your session has ended. Sign in again to keep syncing. Your changes stay on this device.';
+const ROLE_DOWNGRADED_NOTICE =
+  'You can view this board now. Changes that were not synced were discarded, and the copy on this device was deleted. Reload to see the board as it is now.';
+const SAVE_FAILED_NOTICE =
+  'Changes cannot be saved on this device, so they may be lost if the page closes.';
+
+// For a close that is not about this user's access, such as a full board. The server's reason is shown.
+function closedNotice(reason: string): string {
+  return reason
+    ? `The server closed this connection (${reason}). Reload to try again.`
+    : 'The server closed this connection. Reload to try again.';
+}
 
 const newId = () => crypto.randomUUID();
 
@@ -90,10 +116,13 @@ export function CanvasEditor({
   boardId,
   user,
   role,
+  offline,
 }: {
   boardId?: string;
   user?: PresenceUserInfo;
   role?: BoardRole;
+  // Where this user's copy of the board is kept. Without it the board works online only.
+  offline?: { store: LocalStore; userId: string };
 }) {
   // The session owns the document (a Yjs document) for this editor instance. The view and the
   // document stay in step through the session; see session.ts.
@@ -106,6 +135,7 @@ export function CanvasEditor({
   // Starts from the role the board page loaded, and follows the server if it changes while open.
   const [currentRole, setCurrentRole] = useState<BoardRole | undefined>(role);
   const readOnly = currentRole === 'viewer';
+  const [notice, setNotice] = useState<string | null>(null);
   const presenceRef = useRef<PresenceController | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const pointersRef = useRef(new Map<number, Point>());
@@ -113,34 +143,82 @@ export function CanvasEditor({
   const [size, setSize] = useState({ width: 800, height: 600 });
   const userId = user?.id;
   const userName = user?.name;
+  const offlineStore = offline?.store;
+  const offlineUserId = offline?.userId;
 
   useEffect(() => {
     session.setReadOnly(readOnly);
   }, [session, readOnly]);
 
-  // Connects the document to the board's sync endpoint while the editor is mounted. Without a board
-  // id the editor is local only, as in the standalone tests.
+  // Keeps the board's copy on this device, and connects the document to the sync endpoint once the
+  // copy has loaded, so the handshake sends whatever the server lacks. Without a board id the editor
+  // is local only, as in the standalone tests.
   useEffect(() => {
     if (!boardId) {
       return;
     }
-    const provider = new SyncProvider({
-      document: session.document,
-      url: boardSyncUrl(boardId, window.location),
-      onState: (state: ConnectionState) => setConnection(state),
-      onRole: (next: string) => {
-        const parsed = boardRoleSchema.safeParse(next);
-        if (parsed.success) {
-          setCurrentRole(parsed.data);
-        }
-      },
-      // The browser socket has the same members the provider uses; its event handler types are
-      // wider, so the adapter is a cast at this single point.
-      createSocket: (url) => new WebSocket(url) as unknown as SocketLike,
-    });
-    provider.start();
-    return () => provider.stop();
-  }, [boardId, session]);
+    let cancelled = false;
+    let provider: SyncProvider | null = null;
+    const local =
+      offlineStore && offlineUserId
+        ? new LocalBoard({
+            store: offlineStore,
+            userId: offlineUserId,
+            boardId,
+            document: session.document,
+            onSaveError: () => setNotice(SAVE_FAILED_NOTICE),
+          })
+        : null;
+    const connect = () => {
+      if (cancelled) {
+        return;
+      }
+      provider = new SyncProvider({
+        document: session.document,
+        url: boardSyncUrl(boardId, window.location),
+        readOnly: role === 'viewer',
+        onState: (state: ConnectionState) => setConnection(state),
+        onRole: (next: string) => {
+          const parsed = boardRoleSchema.safeParse(next);
+          if (parsed.success) {
+            setCurrentRole(parsed.data);
+          }
+          if (next === 'viewer') {
+            // Changes made while this user could edit may never reach the server now, so they go.
+            void local?.discard();
+            setNotice(ROLE_DOWNGRADED_NOTICE);
+          }
+        },
+        onRevoked: (reason: string) => {
+          if (ACCESS_ENDED_REASONS.has(reason)) {
+            void local?.discard();
+            setNotice(ACCESS_ENDED_NOTICE);
+          } else if (reason === 'not signed in') {
+            setNotice(SESSION_ENDED_NOTICE);
+          } else {
+            setNotice(closedNotice(reason));
+          }
+        },
+        // The browser socket has the same members the provider uses; its event handler types are
+        // wider, so the adapter is a cast at this single point.
+        createSocket: (url) => new WebSocket(url) as unknown as SocketLike,
+      });
+      provider.start();
+    };
+    if (local) {
+      local.open().then(connect, () => {
+        setNotice(SAVE_FAILED_NOTICE);
+        connect();
+      });
+    } else {
+      connect();
+    }
+    return () => {
+      cancelled = true;
+      provider?.stop();
+      void local?.close();
+    };
+  }, [boardId, session, role, offlineStore, offlineUserId]);
 
   // Publishes this participant's presence, and keeps it fresh and expires stale participants while
   // the editor is open.
@@ -349,6 +427,7 @@ export function CanvasEditor({
         participants={participants}
         connection={connection}
         readOnly={readOnly}
+        notice={notice}
         onToolChange={(tool) => dispatch({ type: 'setTool', tool })}
         onZoomIn={() => dispatch({ type: 'zoom', factor: ZOOM_STEP, anchor: center })}
         onZoomOut={() => dispatch({ type: 'zoom', factor: 1 / ZOOM_STEP, anchor: center })}

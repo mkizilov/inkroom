@@ -27,9 +27,11 @@ A frame is a varint outer type, then its payload as length-prefixed bytes. Decod
 truncated frame, an unknown type, a payload over the limit, and trailing bytes.
 
 **Join handshake.** When a connection joins, the room sends its state vector. The client replies
-with step 2 (what the room lacks), and then the room replies to the client's state vector with what
-the client lacks. Both sides then hold the same state. A client that was offline sends its offline
-changes through the same handshake, so nothing is queued on the client.
+with step 2 (what the room lacks). The client sends its own state vector, and the room replies with
+step 2 (what the client lacks). A state vector is answered with step 2 only. Answering it with
+another state vector would never end: both sides would keep answering each other. Both sides then
+hold the same state. A client that was offline sends its offline changes through the same handshake.
+The browser also keeps them on the device until the server stores them; see [offline.md](offline.md).
 
 ## Connection flow
 
@@ -98,7 +100,7 @@ All limits are configurable through `roomLimits` and `connectionLimits` in `buil
 exponential backoff from 500 ms to 15 s and full jitter, so many clients do not reconnect together.
 The backoff resets once a connection has opened. A close with code 1008 means the server refused
 the board, for example because it was deleted, and the provider stops rather than retrying.
-Changes made while offline stay in the document and are sent on reconnect, because the first frame
+Changes made while offline stay in the document, are saved on the device, and are sent on reconnect, because the first frame
 on a new connection is the client's state vector.
 
 ## Tests
@@ -122,6 +124,11 @@ on a new connection is the client's state vector.
   contexts signed in to one account. Drawing, moving and deleting in one updates the other with no
   reload.
 
+- `packages/shared/src/sync-client.test.ts`: the handshake answers a state vector with step 2 only,
+  the acknowledgement and handshake callbacks, and which frames change the document.
+- `apps/web/src/offline/local-board.test.ts` and `apps/web/e2e/offline.spec.ts`: the device copy, and
+  offline edits, reloads and revocation in the browser. See [offline.md](offline.md).
+
 ## Known limits
 
 - **Not verified in this environment.** The WebSocket route depends on `@fastify/websocket` and `ws`,
@@ -139,9 +146,9 @@ on a new connection is the client's state vector.
 - **Single process.** Rooms and connection counts live in one process's memory. Several API
   instances would each hold a separate room for the same board, so horizontal scaling needs a
   shared broadcast layer (for example Redis or Postgres notifications).
-- **Acknowledgements are not yet used by the browser.** The server sends `MESSAGE_ACK` after each
-  update is stored, and `SyncClient.acknowledgedSeq` records it, but the UI does not show saved
-  state, and nothing else depends on it. Reconnection does not rely on acknowledgements: the
+- **Acknowledgements only drive the sync state.** The server sends `MESSAGE_ACK` after each update
+  is stored. The browser counts the changes it has sent that are not acknowledged yet, to show
+  "Syncing…" (see [offline.md](offline.md)), and nothing else depends on the acknowledgement. Reconnection does not rely on acknowledgements: the
   state-vector handshake covers unacknowledged changes.
 - **Awareness is relayed as received.** The server reads client ids and clocks to track presence,
   but does not validate the state JSON. Malformed presence reaches peers unchanged.

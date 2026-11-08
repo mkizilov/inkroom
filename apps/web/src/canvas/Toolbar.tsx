@@ -21,7 +21,8 @@ export type ConnectionDisplay = 'local' | ConnectionState;
 const CONNECTION_LABELS: Record<ConnectionDisplay, string> = {
   local: 'Local only',
   connecting: 'Connecting…',
-  connected: 'Connected',
+  syncing: 'Syncing…',
+  connected: 'Online',
   reconnecting: 'Reconnecting…',
   offline: 'Offline, retrying',
   stopped: 'Disconnected',
@@ -37,6 +38,7 @@ interface ToolbarProps {
   participants: readonly Participant[];
   connection: ConnectionDisplay;
   readOnly: boolean;
+  notice: string | null;
   onToolChange: (tool: Tool) => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -59,6 +61,7 @@ export function Toolbar({
   participants,
   connection,
   readOnly,
+  notice,
   onToolChange,
   onZoomIn,
   onZoomOut,
@@ -167,6 +170,11 @@ export function Toolbar({
         <span className="participant-count">
           {participants.length} {participants.length === 1 ? 'participant' : 'participants'}
         </span>
+        {notice && (
+          <p role="alert" className="notice">
+            {notice}
+          </p>
+        )}
       </div>
     </div>
   );

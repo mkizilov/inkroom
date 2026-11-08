@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
   ProtocolError,
   SyncClient,
+  decodeClientMessage,
   encodeAck,
   encodeAwareness,
   encodeRole,
+  encodeSyncStep1,
   encodeSyncUpdate,
   readOrderedObjects,
 } from '@inkroom/shared';
@@ -29,6 +31,8 @@ const LIMITS: RoomLimits = {
 };
 const BOARD = 'board-1';
 const REMOTE = Symbol('remote');
+// A handshake that is still going after this many frames is treated as a loop, not as slow sync.
+const MAX_FRAMES_PER_DELIVER = 1_000;
 
 class FakeConnection implements RoomConnection {
   readonly frames: Uint8Array[] = [];
@@ -89,7 +93,10 @@ class Peer {
   }
 
   async deliver(): Promise<void> {
-    while (this.connection.frames.length > 0) {
+    for (let handled = 0; this.connection.frames.length > 0; handled += 1) {
+      if (handled > MAX_FRAMES_PER_DELIVER) {
+        throw new Error('the frames exchanged did not settle');
+      }
       const frame = this.connection.frames.shift();
       if (!frame) break;
       for (const reply of this.sync.receive(frame)) {
@@ -602,5 +609,22 @@ describe('room lifecycle and recovery', () => {
     ).objects;
 
     expect(rebuilt.map((object) => object.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('join handshake', () => {
+  it('answers a state vector with a step 2 only, so the exchange ends', async () => {
+    const room = makeRoom(new MemoryBoardStore());
+    const connection = new FakeConnection('a', 'a');
+    room.join(connection);
+    connection.frames.length = 0;
+
+    await room.receive('a', encodeSyncStep1(Y.encodeStateVector(new Y.Doc())));
+
+    const kinds = connection.frames.map((frame) => {
+      const message = decodeClientMessage(frame, LIMITS.maxPayloadBytes);
+      return message.kind === 'sync' ? message.sync.kind : message.kind;
+    });
+    expect(kinds).toEqual(['step2']);
   });
 });
