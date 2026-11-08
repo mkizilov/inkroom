@@ -1,7 +1,7 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { DbExecutor } from '../client';
 import { firstRow } from '../rows';
-import { sessions } from '../schema';
+import { sessions, users } from '../schema';
 
 export interface NewSession {
   userId: string;
@@ -15,11 +15,19 @@ export async function createSession(db: DbExecutor, input: NewSession) {
   return firstRow(rows, 'sessions insert');
 }
 
-export async function findSessionByTokenHash(db: DbExecutor, tokenHash: string) {
+export async function findSessionWithUserByTokenHash(db: DbExecutor, tokenHash: string) {
   const [row] = await db
-    .select()
+    .select({ session: sessions, user: users })
     .from(sessions)
+    .innerJoin(users, eq(users.id, sessions.userId))
     .where(eq(sessions.tokenHash, tokenHash))
     .limit(1);
   return row ?? null;
+}
+
+export async function revokeSessionByTokenHash(db: DbExecutor, tokenHash: string): Promise<void> {
+  await db
+    .update(sessions)
+    .set({ revokedAt: sql`now()` })
+    .where(and(eq(sessions.tokenHash, tokenHash), isNull(sessions.revokedAt)));
 }

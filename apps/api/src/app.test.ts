@@ -1,13 +1,19 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { healthResponseSchema } from '@inkroom/shared';
 import { buildApp } from './app';
+import type { Database } from './db/client';
 
-const healthyDatabase = { ping: async () => {} };
-const unavailableDatabase = {
-  ping: async () => {
-    throw new Error('connection refused');
-  },
-};
+// Health tests never touch the database, so the query interface is left unset.
+const stubDatabase = (ping: () => Promise<void>): Database => ({
+  db: undefined as unknown as Database['db'],
+  ping,
+  close: async () => {},
+});
+
+const healthyDatabase = stubDatabase(async () => {});
+const unavailableDatabase = stubDatabase(async () => {
+  throw new Error('connection refused');
+});
 
 describe('GET /api/health', () => {
   const apps: ReturnType<typeof buildApp>[] = [];

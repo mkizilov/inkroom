@@ -38,12 +38,14 @@ export const users = pgTable(
     id: primaryId(),
     email: text('email').notNull(),
     displayName: text('display_name').notNull(),
+    passwordHash: text('password_hash').notNull(),
     ...timestamps,
   },
   (t) => [
     unique('users_email_unique').on(t.email),
     check('users_email_lowercase', sql.raw('email = lower(email)')),
     check('users_email_not_blank', sql.raw('length(btrim(email)) > 0')),
+    check('users_password_hash_not_blank', sql.raw('length(password_hash) > 0')),
     check(
       'users_display_name_length',
       sql.raw('char_length(btrim(display_name)) between 1 and 100'),
@@ -58,6 +60,7 @@ export const sessions = pgTable(
     userId: uuid('user_id').notNull(),
     tokenHash: text('token_hash').notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
     ...timestamps,
   },
   (t) => [
@@ -143,7 +146,10 @@ export const yjsDocumentUpdates = pgTable(
     }).onDelete('set null'),
     unique('yjs_document_updates_seq_unique').on(t.seq),
     index('yjs_document_updates_board_seq_idx').on(t.boardId, t.seq),
-    check('yjs_document_updates_payload_size', sql.raw('octet_length(payload) between 1 and 1048576')),
+    check(
+      'yjs_document_updates_payload_size',
+      sql.raw('octet_length(payload) between 1 and 1048576'),
+    ),
   ],
 );
 

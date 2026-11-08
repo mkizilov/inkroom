@@ -5,7 +5,12 @@ import { createDatabase } from './db/client';
 async function main(): Promise<void> {
   const config = loadConfig();
   const database = createDatabase(config.databaseUrl);
-  const app = buildApp({ database, logger: true });
+  const app = buildApp({
+    database,
+    logger: true,
+    webOrigin: config.webOrigin,
+    cookieSecure: config.cookieSecure,
+  });
 
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
     app.log.info({ signal }, 'shutting down');

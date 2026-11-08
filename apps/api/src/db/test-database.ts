@@ -5,6 +5,7 @@ import type { PoolConfig } from 'pg';
 import { Pool } from 'pg';
 import { describe } from 'vitest';
 import { createDatabase, type Database } from './client';
+import { sqlStateOf } from './errors';
 
 // Integration tests need TEST_DATABASE_URL (the Compose database or the CI service).
 export const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -37,18 +38,6 @@ export async function createTestDatabase(connectionString: string): Promise<Test
       await admin.end();
     },
   };
-}
-
-// Returns the SQLSTATE of the first driver error in the cause chain (drizzle wraps pg errors).
-export function sqlStateOf(error: unknown): string | undefined {
-  let current: unknown = error;
-  while (current && typeof current === 'object') {
-    if ('code' in current && typeof current.code === 'string') {
-      return current.code;
-    }
-    current = 'cause' in current ? current.cause : undefined;
-  }
-  return undefined;
 }
 
 export async function expectSqlState(promise: Promise<unknown>, expected: string): Promise<void> {

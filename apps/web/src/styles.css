@@ -13,3 +13,36 @@ main {
   margin: 4rem auto;
   padding: 0 1.5rem;
 }
+
+form {
+  display: grid;
+  gap: 1rem;
+  max-width: 24rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.field input {
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+}
+
+.field-error,
+.form-error {
+  color: #b42318;
+  margin: 0;
+}
+
+button {
+  padding: 0.5rem 1rem;
+  font: inherit;
+  justify-self: start;
+}
+
+button:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}

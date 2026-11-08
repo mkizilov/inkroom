@@ -4,12 +4,34 @@ import { loadConfig } from './config';
 const databaseUrl = 'postgres://inkroom:inkroom@127.0.0.1:21432/inkroom';
 
 describe('loadConfig', () => {
-  it('applies loopback and port defaults', () => {
+  it('applies loopback, port and origin defaults with insecure cookies outside production', () => {
     expect(loadConfig({ DATABASE_URL: databaseUrl })).toEqual({
       host: '127.0.0.1',
       port: 21080,
       databaseUrl,
+      webOrigin: 'http://127.0.0.1:21173',
+      cookieSecure: false,
     });
+  });
+
+  it('enables secure cookies by default in production', () => {
+    expect(loadConfig({ NODE_ENV: 'production', DATABASE_URL: databaseUrl }).cookieSecure).toBe(
+      true,
+    );
+  });
+
+  it('lets COOKIE_SECURE override the production default', () => {
+    expect(
+      loadConfig({ NODE_ENV: 'production', COOKIE_SECURE: 'false', DATABASE_URL: databaseUrl })
+        .cookieSecure,
+    ).toBe(false);
+  });
+
+  it('normalizes WEB_ORIGIN to its origin', () => {
+    expect(
+      loadConfig({ WEB_ORIGIN: 'https://inkroom.example.com/', DATABASE_URL: databaseUrl })
+        .webOrigin,
+    ).toBe('https://inkroom.example.com');
   });
 
   it('reads overrides from the environment', () => {

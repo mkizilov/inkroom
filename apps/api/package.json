@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@inkroom/shared": "workspace:*",
+    "argon2": "^0.41.0",
     "drizzle-orm": "^0.44.0",
     "fastify": "^5.2.0",
     "pg": "^8.13.1",

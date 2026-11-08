@@ -6,6 +6,7 @@ import { users } from '../schema';
 export interface NewUser {
   email: string;
   displayName: string;
+  passwordHash: string;
 }
 
 export async function createUser(db: DbExecutor, input: NewUser) {
@@ -14,6 +15,7 @@ export async function createUser(db: DbExecutor, input: NewUser) {
     .values({
       email: input.email.trim().toLowerCase(),
       displayName: input.displayName.trim(),
+      passwordHash: input.passwordHash,
     })
     .returning();
   return firstRow(rows, 'users insert');

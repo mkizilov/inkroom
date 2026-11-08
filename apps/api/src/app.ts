@@ -1,17 +1,45 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { type HealthResponse } from '@inkroom/shared';
+import { createFailureLimiter } from './auth/rate-limit';
+import { registerAuthRoutes } from './auth/routes';
+import type { Database } from './db/client';
+import { registerErrorHandlers } from './http/errors';
+import { requireTrustedOrigin } from './http/origin';
 
-export interface DatabaseProbe {
-  ping(): Promise<void>;
+export const DEFAULT_WEB_ORIGIN = 'http://127.0.0.1:21173';
+
+export interface LoginRateLimits {
+  maxFailuresPerEmail: number;
+  maxFailuresPerIp: number;
+  windowMs: number;
 }
+
+export const DEFAULT_LOGIN_RATE_LIMITS: LoginRateLimits = {
+  maxFailuresPerEmail: 5,
+  maxFailuresPerIp: 20,
+  windowMs: 15 * 60 * 1000,
+};
 
 export interface BuildAppOptions {
-  database: DatabaseProbe;
+  database: Database;
   logger?: boolean;
+  webOrigin?: string;
+  cookieSecure?: boolean;
+  loginRateLimits?: Partial<LoginRateLimits>;
 }
 
-export function buildApp({ database, logger = false }: BuildAppOptions): FastifyInstance {
+export function buildApp({
+  database,
+  logger = false,
+  webOrigin = DEFAULT_WEB_ORIGIN,
+  cookieSecure = false,
+  loginRateLimits,
+}: BuildAppOptions): FastifyInstance {
+  const limits = { ...DEFAULT_LOGIN_RATE_LIMITS, ...loginRateLimits };
   const app = Fastify({ logger });
+
+  registerErrorHandlers(app);
+  app.addHook('onRequest', requireTrustedOrigin(webOrigin));
 
   app.get('/api/health', async (request, reply) => {
     let databaseStatus: HealthResponse['database'] = 'up';
@@ -30,6 +58,21 @@ export function buildApp({ database, logger = false }: BuildAppOptions): Fastify
       timestamp: new Date().toISOString(),
     };
     return reply.code(healthy ? 200 : 503).send(body);
+  });
+
+  registerAuthRoutes(app, {
+    db: database.db,
+    cookieSecure,
+    limits: {
+      byEmail: createFailureLimiter({
+        maxFailures: limits.maxFailuresPerEmail,
+        windowMs: limits.windowMs,
+      }),
+      byIp: createFailureLimiter({
+        maxFailures: limits.maxFailuresPerIp,
+        windowMs: limits.windowMs,
+      }),
+    },
   });
 
   return app;

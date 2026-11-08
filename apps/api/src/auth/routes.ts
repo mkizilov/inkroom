@@ -1,0 +1,123 @@
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { loginRequestSchema, registerRequestSchema, type AuthUser } from '@inkroom/shared';
+import type { DbExecutor } from '../db/client';
+import { sqlStateOf, UNIQUE_VIOLATION } from '../db/errors';
+import { AppError } from '../http/errors';
+import { parseBody } from '../http/validation';
+import { type FailureLimiter } from './rate-limit';
+import { readSessionToken, sessionClearCookie, sessionSetCookie } from './cookies';
+import { SESSION_TOKEN_PATTERN } from './session-token';
+import {
+  authenticateUser,
+  issueSession,
+  registerUser,
+  resolveSession,
+  revokeSession,
+  toAuthUser,
+} from './service';
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    currentUser: AuthUser | null;
+  }
+}
+
+export interface AuthRouteOptions {
+  db: DbExecutor;
+  cookieSecure: boolean;
+  limits: { byEmail: FailureLimiter; byIp: FailureLimiter };
+}
+
+export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptions): void {
+  const { db, cookieSecure, limits } = options;
+  app.decorateRequest('currentUser', null);
+
+  const sessionToken = (request: FastifyRequest): string | undefined => {
+    const token = readSessionToken(request.headers.cookie, cookieSecure);
+    return token && SESSION_TOKEN_PATTERN.test(token) ? token : undefined;
+  };
+
+  // Authentication middleware: attaches request.currentUser or rejects with a specific 401 code.
+  const requireUser = async (request: FastifyRequest): Promise<void> => {
+    const token = sessionToken(request);
+    if (!token) {
+      throw new AppError(401, 'unauthenticated', 'Sign in to continue.');
+    }
+    const session = await resolveSession(db, token);
+    switch (session.status) {
+      case 'active':
+        request.currentUser = session.user;
+        return;
+      case 'expired':
+        throw new AppError(401, 'session_expired', 'Your session has expired. Sign in again.');
+      case 'revoked':
+        throw new AppError(401, 'session_revoked', 'You have been signed out. Sign in again.');
+      case 'invalid':
+        throw new AppError(401, 'unauthenticated', 'Sign in to continue.');
+    }
+  };
+
+  const currentUserOf = (request: FastifyRequest): AuthUser => {
+    if (!request.currentUser) {
+      throw new AppError(401, 'unauthenticated', 'Sign in to continue.');
+    }
+    return request.currentUser;
+  };
+
+  const setSessionCookie = (token: string) => sessionSetCookie(token, cookieSecure);
+
+  app.post('/api/auth/register', async (request, reply) => {
+    const input = parseBody(registerRequestSchema, request.body);
+    const user = await registerUser(db, input).catch((error: unknown) => {
+      if (sqlStateOf(error) === UNIQUE_VIOLATION) {
+        throw new AppError(409, 'email_taken', 'An account with this email already exists.');
+      }
+      throw error;
+    });
+    const token = await issueSession(db, user.id);
+    reply.header('Set-Cookie', setSessionCookie(token));
+    return reply.code(201).send({ user: toAuthUser(user) });
+  });
+
+  app.post('/api/auth/login', async (request, reply) => {
+    const { email, password } = parseBody(loginRequestSchema, request.body);
+    const retryAfter = Math.max(
+      limits.byEmail.retryAfterSeconds(email),
+      limits.byIp.retryAfterSeconds(request.ip),
+    );
+    if (retryAfter > 0) {
+      throw new AppError(
+        429,
+        'rate_limited',
+        'Too many sign-in attempts. Wait a few minutes and try again.',
+        undefined,
+        { 'Retry-After': String(retryAfter) },
+      );
+    }
+
+    const user = await authenticateUser(db, email, password);
+    if (!user) {
+      limits.byEmail.recordFailure(email);
+      limits.byIp.recordFailure(request.ip);
+      throw new AppError(401, 'invalid_credentials', 'Email or password is incorrect.');
+    }
+
+    limits.byEmail.reset(email);
+    const token = await issueSession(db, user.id);
+    reply.header('Set-Cookie', setSessionCookie(token));
+    return { user: toAuthUser(user) };
+  });
+
+  app.post('/api/auth/logout', async (request, reply) => {
+    const token = sessionToken(request);
+    if (token) {
+      await revokeSession(db, token);
+    }
+    reply.header('Set-Cookie', sessionClearCookie(cookieSecure));
+    return reply.code(204).send();
+  });
+
+  app.get('/api/auth/me', { preHandler: requireUser }, async (request) => ({
+    user: currentUserOf(request),
+  }));
+}

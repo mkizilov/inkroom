@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createBoard, deleteBoard, getBoardRole, listBoardsForUser } from './repositories/boards';
-import { createSession, findSessionByTokenHash } from './repositories/sessions';
+import {
+  createSession,
+  findSessionWithUserByTokenHash,
+  revokeSessionByTokenHash,
+} from './repositories/sessions';
 import {
   appendDocumentUpdate,
   findLatestSnapshot,
@@ -22,6 +26,9 @@ const uniqueEmail = () => `${randomUUID()}@example.com`;
 describeWithDatabase('database access modules', () => {
   let database: TestDatabase;
 
+  const newUser = (displayName: string) =>
+    createUser(database.db, { email: uniqueEmail(), displayName, passwordHash: 'test-hash' });
+
   beforeAll(async () => {
     database = await createTestDatabase(testDatabaseUrl ?? '');
   });
@@ -32,7 +39,11 @@ describeWithDatabase('database access modules', () => {
 
   it('normalizes emails on create and finds users case-insensitively', async () => {
     const email = `${randomUUID()}@Example.COM`;
-    const created = await createUser(database.db, { email: `  ${email}  `, displayName: ' Ada ' });
+    const created = await createUser(database.db, {
+      email: `  ${email}  `,
+      displayName: ' Ada ',
+      passwordHash: 'test-hash',
+    });
 
     expect(created.email).toBe(email.toLowerCase());
     expect(created.displayName).toBe('Ada');
@@ -40,8 +51,8 @@ describeWithDatabase('database access modules', () => {
     expect(await findUserByEmail(database.db, uniqueEmail())).toBeNull();
   });
 
-  it('stores sessions by token hash', async () => {
-    const user = await createUser(database.db, { email: uniqueEmail(), displayName: 'Session' });
+  it('stores sessions by token hash and returns the owning user', async () => {
+    const user = await newUser('Session');
     const tokenHash = `hash-${randomUUID()}`;
     const session = await createSession(database.db, {
       userId: user.id,
@@ -49,12 +60,29 @@ describeWithDatabase('database access modules', () => {
       expiresAt: new Date(Date.now() + 60_000),
     });
 
-    expect((await findSessionByTokenHash(database.db, tokenHash))?.id).toBe(session.id);
-    expect(await findSessionByTokenHash(database.db, 'missing')).toBeNull();
+    const found = await findSessionWithUserByTokenHash(database.db, tokenHash);
+    expect(found?.session.id).toBe(session.id);
+    expect(found?.user.id).toBe(user.id);
+    expect(await findSessionWithUserByTokenHash(database.db, 'missing')).toBeNull();
+  });
+
+  it('revokes a session by token hash and keeps it findable', async () => {
+    const user = await newUser('Revoked');
+    const tokenHash = `hash-${randomUUID()}`;
+    await createSession(database.db, {
+      userId: user.id,
+      tokenHash,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    await revokeSessionByTokenHash(database.db, tokenHash);
+
+    const found = await findSessionWithUserByTokenHash(database.db, tokenHash);
+    expect(found?.session.revokedAt).toBeInstanceOf(Date);
   });
 
   it('creates a board and its owner membership together', async () => {
-    const owner = await createUser(database.db, { email: uniqueEmail(), displayName: 'Owner' });
+    const owner = await newUser('Owner');
     const board = await createBoard(database.db, { ownerId: owner.id, title: ' Planning ' });
 
     expect(board.title).toBe('Planning');
@@ -62,16 +90,16 @@ describeWithDatabase('database access modules', () => {
   });
 
   it('does not create a board when its title is invalid', async () => {
-    const owner = await createUser(database.db, { email: uniqueEmail(), displayName: 'Owner' });
+    const owner = await newUser('Owner');
 
     await expect(createBoard(database.db, { ownerId: owner.id, title: '   ' })).rejects.toThrow();
     expect(await listBoardsForUser(database.db, owner.id)).toHaveLength(0);
   });
 
   it('lists only the boards a user is a member of, with their role', async () => {
-    const owner = await createUser(database.db, { email: uniqueEmail(), displayName: 'Owner' });
-    const editor = await createUser(database.db, { email: uniqueEmail(), displayName: 'Editor' });
-    const outsider = await createUser(database.db, { email: uniqueEmail(), displayName: 'Other' });
+    const owner = await newUser('Owner');
+    const editor = await newUser('Editor');
+    const outsider = await newUser('Other');
     const board = await createBoard(database.db, { ownerId: owner.id, title: 'Shared' });
     await createBoard(database.db, { ownerId: outsider.id, title: 'Private' });
     await addMember(database.db, { boardId: board.id, userId: editor.id, role: 'editor' });
@@ -85,8 +113,8 @@ describeWithDatabase('database access modules', () => {
   });
 
   it('changes member roles but never the owner role', async () => {
-    const owner = await createUser(database.db, { email: uniqueEmail(), displayName: 'Owner' });
-    const member = await createUser(database.db, { email: uniqueEmail(), displayName: 'Member' });
+    const owner = await newUser('Owner');
+    const member = await newUser('Member');
     const board = await createBoard(database.db, { ownerId: owner.id, title: 'Roles' });
     await addMember(database.db, { boardId: board.id, userId: member.id, role: 'viewer' });
 
@@ -102,8 +130,8 @@ describeWithDatabase('database access modules', () => {
   });
 
   it('removes members but never the owner', async () => {
-    const owner = await createUser(database.db, { email: uniqueEmail(), displayName: 'Owner' });
-    const member = await createUser(database.db, { email: uniqueEmail(), displayName: 'Member' });
+    const owner = await newUser('Owner');
+    const member = await newUser('Member');
     const board = await createBoard(database.db, { ownerId: owner.id, title: 'Removal' });
     await addMember(database.db, { boardId: board.id, userId: member.id, role: 'editor' });
 
@@ -114,7 +142,7 @@ describeWithDatabase('database access modules', () => {
   });
 
   it('appends document updates in order and reads them after a cursor', async () => {
-    const owner = await createUser(database.db, { email: uniqueEmail(), displayName: 'Owner' });
+    const owner = await newUser('Owner');
     const board = await createBoard(database.db, { ownerId: owner.id, title: 'Log' });
 
     const first = await appendDocumentUpdate(database.db, {
@@ -137,7 +165,7 @@ describeWithDatabase('database access modules', () => {
   });
 
   it('returns the snapshot with the highest sequence number', async () => {
-    const owner = await createUser(database.db, { email: uniqueEmail(), displayName: 'Owner' });
+    const owner = await newUser('Owner');
     const board = await createBoard(database.db, { ownerId: owner.id, title: 'Snapshots' });
     expect(await findLatestSnapshot(database.db, board.id)).toBeNull();
 
@@ -149,7 +177,7 @@ describeWithDatabase('database access modules', () => {
   });
 
   it('deletes a board and everything that depends on it', async () => {
-    const owner = await createUser(database.db, { email: uniqueEmail(), displayName: 'Owner' });
+    const owner = await newUser('Owner');
     const board = await createBoard(database.db, { ownerId: owner.id, title: 'Doomed' });
     await appendDocumentUpdate(database.db, {
       boardId: board.id,

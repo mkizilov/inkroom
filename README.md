@@ -63,6 +63,8 @@ Copy `.env.example` to `.env`. The file is git-ignored.
 | `POSTGRES_PASSWORD` | `inkroom`                                            | Docker Compose database |
 | `POSTGRES_DB`       | `inkroom`                                            | Docker Compose database |
 | `POSTGRES_PORT`     | `21432`                                              | Docker Compose port     |
+| `WEB_ORIGIN`        | `http://127.0.0.1:21173`                             | API origin check (CSRF) |
+| `COOKIE_SECURE`     | `true` in production, `false` otherwise              | Session cookie `Secure` |
 
 The API validates its environment at startup and exits with a clear error when `DATABASE_URL` is
 missing or a port is out of range. The web dev server proxies `/api` to `http://127.0.0.1:21080`;
@@ -105,6 +107,9 @@ Run from the repository root.
   `apps/api/src/db/schema.ts`, with versioned migrations in `apps/api/drizzle/`. Repository modules
   in `apps/api/src/db/repositories/` are the only code that queries tables directly. See
   [docs/database.md](docs/database.md) for the structure, deletion policies and migration workflow.
+- **Authentication**: email and password accounts (Argon2id), server-side sessions stored as token
+  hashes, HTTP-only cookies, login rate limiting and an Origin check on writes. See
+  [docs/authentication.md](docs/authentication.md).
 - **Web (`apps/web`)**: React 19 with Vite. The app talks to the API only through relative `/api`
   URLs, which the dev server proxies, so no CORS configuration is needed in development.
 
@@ -142,9 +147,11 @@ Node 22. The `pnpm-lock.yaml` file must be committed for the frozen install to s
 
 - Implemented: monorepo layout, strict TypeScript, ESLint, Prettier, Vitest, health endpoint,
   database connectivity check, Docker Compose PostgreSQL, CI workflow, database schema with
-  versioned migrations, repository modules, seed data and integration tests.
-- Not implemented: whiteboard interface, real-time collaboration, authentication, Yjs update
-  compaction, production Docker images.
+  versioned migrations, repository modules, seed data, integration tests, and authentication
+  (register, login, logout, current user, session expiry and revocation, rate limiting, CSRF
+  origin checks) with login and registration pages.
+- Not implemented: whiteboard interface, real-time collaboration, OAuth or social sign-in, Yjs
+  update compaction, email verification, password reset, production Docker images.
 
 ## Contributing
 

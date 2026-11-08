@@ -23,7 +23,7 @@ const uniqueEmail = () => `${randomUUID()}@example.com`;
 async function insertUser(db: TestDatabase['db'], displayName = 'Test user') {
   const [user] = await db
     .insert(users)
-    .values({ email: uniqueEmail(), displayName })
+    .values({ email: uniqueEmail(), displayName, passwordHash: 'test-hash' })
     .returning();
   if (!user) throw new Error('user insert returned no row');
   return user;
@@ -66,30 +66,40 @@ describeWithDatabase('database schema constraints', () => {
 
   it('rejects duplicate and non-normalized emails', async () => {
     const email = uniqueEmail();
-    await database.db.insert(users).values({ email, displayName: 'First' });
+    await database.db
+      .insert(users)
+      .values({ email, displayName: 'First', passwordHash: 'test-hash' });
 
     await expectSqlState(
-      database.db.insert(users).values({ email, displayName: 'Second' }),
+      database.db
+        .insert(users)
+        .values({ email, displayName: 'Second', passwordHash: 'test-hash' }),
       '23505',
     );
     await expectSqlState(
-      database.db.insert(users).values({ email: email.toUpperCase(), displayName: 'Third' }),
+      database.db
+        .insert(users)
+        .values({ email: email.toUpperCase(), displayName: 'Third', passwordHash: 'test-hash' }),
       '23514',
     );
   });
 
   it('rejects blank or overlong display names', async () => {
     await expectSqlState(
-      database.db.insert(users).values({ email: uniqueEmail(), displayName: '   ' }),
+      database.db
+        .insert(users)
+        .values({ email: uniqueEmail(), displayName: '   ', passwordHash: 'test-hash' }),
       '23514',
     );
     await expectSqlState(
-      database.db.insert(users).values({ email: uniqueEmail(), displayName: 'x'.repeat(101) }),
+      database.db
+        .insert(users)
+        .values({ email: uniqueEmail(), displayName: 'x'.repeat(101), passwordHash: 'test-hash' }),
       '23514',
     );
   });
 
-  it('requires sessions to reference an existing user and to have unique token hashes', async () => {
+  it('requires sessions to reference a user and to have unique token hashes', async () => {
     const user = await insertUser(database.db);
     const expiresAt = new Date(Date.now() + 60_000);
 
@@ -216,7 +226,7 @@ describeWithDatabase('database schema constraints', () => {
     expect(inserted[0]?.seq).toBeLessThan(inserted[1]?.seq ?? 0);
   });
 
-  it('rejects snapshots with a non-positive sequence or a duplicate sequence per board', async () => {
+  it('rejects snapshots with a non-positive or duplicate sequence per board', async () => {
     const owner = await insertUser(database.db);
     const board = await insertBoard(database.db, owner.id);
 
@@ -242,7 +252,13 @@ describeWithDatabase('database schema constraints', () => {
     const past = new Date('2020-01-01T00:00:00Z');
     const [user] = await database.db
       .insert(users)
-      .values({ email: uniqueEmail(), displayName: 'Before', createdAt: past, updatedAt: past })
+      .values({
+        email: uniqueEmail(),
+        displayName: 'Before',
+        passwordHash: 'test-hash',
+        createdAt: past,
+        updatedAt: past,
+      })
       .returning();
     if (!user) throw new Error('user insert returned no row');
 
@@ -268,7 +284,7 @@ describeWithDatabase('database cascade and deletion policies', () => {
     await database.drop();
   });
 
-  it('removes sessions and memberships when a user is deleted, but keeps other users boards', async () => {
+  it('removes sessions and memberships of a deleted user but keeps their boards', async () => {
     const owner = await insertUser(database.db);
     const member = await insertUser(database.db);
     const board = await insertBoard(database.db, owner.id);
@@ -345,6 +361,8 @@ describeWithDatabase('database cascade and deletion policies', () => {
     expect(
       await database.db.select().from(boardSnapshots).where(eq(boardSnapshots.boardId, board.id)),
     ).toHaveLength(0);
-    expect(await database.db.select().from(users).where(eq(users.id, owner.id))).toHaveLength(1);
+    expect(await database.db.select().from(users).where(eq(users.id, owner.id))).toHaveLength(
+      1,
+    );
   });
 });
