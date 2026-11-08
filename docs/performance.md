@@ -133,3 +133,6 @@ stacking order, the hidden text box and long text at the edge. They have not bee
   `>=22.9`, so older 22.x releases will fail to start the script. Pass `--json=<path>` to save the results.
 - `pnpm --filter @inkroom/web bench` runs the document benchmarks, after `pnpm install`.
 - `bench/reference.ts` holds the pre-change code used for comparison. Do not change it.
+- On 8 November 2026 the same runner also passed its equivalence checks on Node 22.23.4. Those timings
+  were taken right after a browser run, so they are not comparable with the numbers above. See
+  ROADMAP step 5.

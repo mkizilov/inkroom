@@ -112,11 +112,13 @@ can still be opened offline.
 - The service worker serves the files cached by the last online load. A new release takes effect on
   the next online load.
 - No encryption at rest, and no age-based cleanup of copies.
-- **Not verified here.** The offline browser tests in `apps/web/e2e/offline.spec.ts` have not been
-  run in this environment. See the commit message for what was and was not verified.
+- **Write window.** An edit is written to the device copy about 12 ms after it is drawn, measured on
+  an idle browser. A reload or a closed tab inside that window can lose the last edit, and nothing
+  warns the user yet (ROADMAP step 9).
+- **Verified.** The offline browser tests in `apps/web/e2e/offline.spec.ts` pass. The reload test waits
+  for the device copy to record the edit before it reloads.
 - **Dependencies.** The copy is kept by a small in-house store rather than the `y-indexeddb`
-  package. The package could not be installed in this environment, and a lockfile change could not
-  be generated. Replacing the store with `y-indexeddb` later would not change the saved format.
+  package. The store is small enough to keep. Replacing it later would not change the saved format.
 
 ## Tests
 

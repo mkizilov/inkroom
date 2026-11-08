@@ -57,7 +57,9 @@ checks that the environment allows, and report the results exactly:
 - Integration tests need PostgreSQL:
   `TEST_DATABASE_URL=... pnpm --filter @inkroom/api exec vitest run integration`. Set
   `REQUIRE_TEST_DATABASE=true` to make a missing database a failure.
-- Browser tests (`pnpm test:e2e`) need the API, PostgreSQL and the Playwright browser.
+- Browser tests (`pnpm test:e2e`) need the API, PostgreSQL and the Playwright browser. Install the
+  browser once with `pnpm --filter @inkroom/web exec playwright install chromium`. The suite starts
+  its own API and web servers.
 - When touching the API runtime or the web app, start them with `pnpm dev` and check
   `http://127.0.0.1:21080/api/health` and `http://127.0.0.1:21173`. Then stop the processes.
 - Use loopback ports 21000–21099 for any server you start. Keep at most two build or test workers.

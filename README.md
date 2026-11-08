@@ -11,14 +11,11 @@ The features are implemented: accounts and sessions, boards with owner, editor a
 the canvas editor, real-time sync, stored history with restore, offline editing, import and export,
 presence, and the production deployment setup described below.
 
-The code has not yet been built, type-checked, linted or tested in an environment with installed
-dependencies. The authoring environment could not reach the package registry or run Docker. The
-first CI run is the first full verification. [ROADMAP.md](ROADMAP.md) lists what has been verified,
-what has not, and the prioritized next steps. See also [Limitations](#limitations).
-
-One thing blocks CI and the Docker builds: `pnpm-lock.yaml` is not committed yet. Both use
-`pnpm install --frozen-lockfile`, which fails without it. Generate it on a networked machine with
-pnpm 9.15.4 (`pnpm install`), review the diff, and commit it.
+The project passes its local verification suite: type checks, lint, formatting, the unit and
+integration tests against PostgreSQL 16, the production bundles, and the browser tests, with two
+exceptions that cannot run in the authoring sandbox. See [Verification](#verification) for the
+results and [Limitations](#limitations) for what remains unverified. [ROADMAP.md](ROADMAP.md) lists
+the prioritized next steps.
 
 ## Repository layout
 
@@ -221,7 +218,8 @@ TLS-terminating reverse proxy in front of it.
 
 Steps:
 
-1. Commit `pnpm-lock.yaml`, as described under [Status](#status).
+1. Check that `pnpm-lock.yaml` is committed and matches `package.json`. The Dockerfiles install with
+   `--frozen-lockfile`, so a stale lockfile fails the build.
 2. Create the environment file: `cp .env.production.example .env.production`. Set a long random
    `POSTGRES_PASSWORD`, and set `WEB_ORIGIN` to the public `https://` origin.
 3. Start the stack:
@@ -303,13 +301,21 @@ Guidance:
 
 ## Limitations
 
-- The lockfile is not committed yet. Installs with `--frozen-lockfile`, the CI jobs and both Docker
-  builds fail until it is.
-- Nothing has been run in the authoring environment: no install, type check, lint, test, build,
-  Docker build, or browser test. The Compose file and the workflow were checked for YAML syntax, and
-  the TypeScript for syntax. Expect the first CI run to find problems.
+- The Docker image builds, the production Compose stack and the nginx configuration have not been
+  run. The Compose files validate, and `nginx -t` has not been run because nginx is not installed
+  here.
+- Two browser tests in `apps/web/e2e/import-export.spec.ts` (the JSON round trip and the region
+  export) read downloaded files. In this sandbox every browser download is cancelled, even a plain
+  `data:` link, so these two tests are unverified here. The other 20 browser tests pass.
+- An offline edit reaches the device copy about 12 ms after it is drawn, measured on an idle browser.
+  Closing the page inside that window can lose the last edit. There is no unsaved-changes warning yet.
+- The web app's main chunk is 828 kB minified (252 kB gzipped), above Vite's 500 kB advisory limit.
+- On screens shorter than about 900 px the canvas starts below the fold, because the sharing panel
+  sits above it. The browser tests scroll the canvas into view before drawing.
 - Rate limits and connection counts are per API process. Several API processes would multiply the
   limits. A shared store is needed before scaling out.
+- The demo password `demo-password-123` appears in the seed script and the docs. It is for local
+  development only, and the seed refuses to run when `NODE_ENV=production`.
 - Writes check membership but not the session, so a session that ends in another process can still
   write for up to 30 seconds. Sign-out in the same process is immediate.
 - Import always creates a new board. Merging into an existing board is not supported.
@@ -318,6 +324,38 @@ Guidance:
 - The application does not encrypt data at rest. Use an encrypted volume or disk.
 - Most features have been written and reviewed, but not executed against installed dependencies. See
   [ROADMAP.md](ROADMAP.md) for the status of each area.
+
+## Verification
+
+Last full run: 8 November 2026 on macOS (Apple M4, 16 GB), Node.js 22.23.4 (`.nvmrc` pins 22),
+pnpm 9.15.4, PostgreSQL 16.15 on a local cluster, and Playwright 1.65.0 with Chromium.
+
+- `pnpm install --frozen-lockfile` succeeds.
+- `pnpm typecheck`, `pnpm lint` and `pnpm format:check` pass.
+- `pnpm test` with `TEST_DATABASE_URL` set passes: 116 shared tests, 204 API tests (123 of them
+  integration tests against PostgreSQL 16, none skipped), and 242 web tests.
+- `pnpm build` produces the API bundles (`server.js` and `migrate.js`) and the web app. The bundled
+  migration runner applied the migrations twice, and the second run changed nothing.
+- The built server reported `/api/ready` as `ready` and `/api/health` as `ok`, and returned 404 for an
+  unknown route.
+- `pnpm deploy --prod` for the API gives a directory with `dist/`, `drizzle/` and a working native
+  `argon2` module.
+- `pnpm test:e2e` passes 20 of 22 browser tests. The two that fail are the download tests in
+  [Limitations](#limitations).
+- The geometry benchmark's equivalence checks pass on Node 22.23.4 and 26.13.0. Timings are in
+  [docs/performance.md](docs/performance.md).
+- Both Compose files validate with `docker-compose` 5.7.0 without contacting a Docker daemon.
+- Not run: the Docker image builds, `nginx -t`, and the document benchmark (`pnpm bench`).
+
+## License
+
+InkRoom is released under the [MIT License](LICENSE), copyright 2026 Mykyta Kizilov. Every package
+declares `"license": "MIT"`.
+
+The 96 production dependencies are MIT (85), ISC (7), BSD-3-Clause (3: `fast-uri`,
+`light-my-request`, `secure-json-parse`) and Apache-2.0 (1: `drizzle-orm`). No third-party source is
+copied into this repository. Each dependency keeps its license file in `node_modules`, and the API
+deployment keeps them too, so the notices travel with a binary release.
 
 ## Contributing
 

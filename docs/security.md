@@ -80,6 +80,8 @@ audit has been run.
 
 ## Residual risks
 
+- Revision reads and writes check the caller's membership in the routes, not in the store functions.
+  A new caller of the store would have to repeat the check (ROADMAP step 7).
 - Rate limits and connection counts are kept in memory, per process. Running several API processes
   multiplies the limits, and a shared store would be needed to enforce them globally.
 - A session that ends in another process can still write for up to the 30-second access-check

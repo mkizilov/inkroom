@@ -2,6 +2,7 @@
   "name": "inkroom",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "InkRoom: a collaborative whiteboard application",
   "packageManager": "pnpm@9.15.4",
   "engines": {

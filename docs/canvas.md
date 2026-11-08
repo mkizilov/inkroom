@@ -31,7 +31,7 @@ zod schemas validate objects on the client and any future server.
 import { parseCanvasDocument, serializeCanvasDocument } from '@inkroom/shared';
 
 const json = serializeCanvasDocument(objects); // validates first, then emits { version, objects }
-const document = parseCanvasDocument(json);    // throws ZodError on invalid input
+const document = parseCanvasDocument(json); // throws ZodError on invalid input
 ```
 
 The format is `{ "version": 1, "objects": [...] }`. Parsing rejects unknown object types, non-finite

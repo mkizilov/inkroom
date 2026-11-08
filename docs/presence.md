@@ -71,7 +71,8 @@ presence remains in memory.
 - **Publishing.** `PresenceController` (`apps/web/src/canvas/presence/presence-controller.ts`)
   publishes the user, the colour, the cursor and the selection. Cursor moves are throttled to one
   update every 50 ms, with a trailing update, so the last position is always sent. Selection
-  changes go out at once.
+  changes go out at once. A cursor is published on any pointer movement over the canvas, including
+  movement with no button held, so a participant who is only hovering is visible to others.
 - **Heartbeat.** Every 15 seconds the client re-sends its state with a newer clock, so an idle
   participant is not dropped. `maintainAwareness` does this and runs the local expiry check every
   5 seconds.
