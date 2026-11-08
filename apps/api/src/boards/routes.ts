@@ -31,7 +31,7 @@ export interface BoardRouteOptions {
 
 type BoardRow = typeof boards.$inferSelect;
 
-function toBoard(row: BoardRow, role: BoardRole): Board {
+export function toBoard(row: BoardRow, role: BoardRole): Board {
   return {
     id: row.id,
     title: row.title,

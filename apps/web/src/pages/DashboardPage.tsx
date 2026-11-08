@@ -4,6 +4,7 @@ import { describeError } from '../auth/messages';
 import { ApiStatus } from '../components/ApiStatus';
 import { BoardList } from '../boards/BoardList';
 import { CreateBoardForm } from '../boards/CreateBoardForm';
+import { ImportBoardForm } from '../boards/ImportBoardForm';
 import { useBoardList } from '../boards/useBoardList';
 
 export function DashboardPage() {
@@ -47,6 +48,7 @@ export function DashboardPage() {
         </p>
       )}
       <CreateBoardForm onCreate={list.addBoard} />
+      <ImportBoardForm />
       <BoardList list={list} />
       <footer className="page-footer">
         <ApiStatus />

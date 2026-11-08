@@ -49,7 +49,9 @@ export class LocalBoard {
       this.loading = false;
     }
     if (updates.length > this.compactAfter) {
-      this.enqueue(() => store.replaceUpdates(userId, boardId, Y.encodeStateAsUpdate(document.doc)));
+      this.enqueue(() =>
+        store.replaceUpdates(userId, boardId, Y.encodeStateAsUpdate(document.doc)),
+      );
     }
   }
 
@@ -80,7 +82,9 @@ export class LocalBoard {
     if (this.savedSinceCompaction >= this.compactAfter) {
       this.savedSinceCompaction = 0;
       // The state is read when this task runs, so it includes every update queued before it.
-      this.enqueue(() => store.replaceUpdates(userId, boardId, Y.encodeStateAsUpdate(document.doc)));
+      this.enqueue(() =>
+        store.replaceUpdates(userId, boardId, Y.encodeStateAsUpdate(document.doc)),
+      );
     }
   }
 

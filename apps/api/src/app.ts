@@ -5,6 +5,7 @@ import { createRequireUser } from './auth/middleware';
 import { createFailureLimiter } from './auth/rate-limit';
 import { registerAuthRoutes } from './auth/routes';
 import { registerBoardRoutes } from './boards/routes';
+import { registerImportRoutes } from './boards/import';
 import { registerMemberRoutes } from './boards/member-routes';
 import { registerRevisionRoutes } from './boards/revisions';
 import type { Database } from './db/client';
@@ -130,6 +131,7 @@ export async function buildApp(options: BuildAppOptions): Promise<InkRoomApp> {
   });
 
   registerBoardRoutes(app, { db: database.db, requireUser, sync });
+  registerImportRoutes(app, { db: database.db, store, requireUser });
   registerMemberRoutes(app, { db: database.db, sync, requireUser });
   registerSyncRoutes(app, { db: database.db, service: sync, webOrigin, cookieSecure });
   registerRevisionRoutes(app, { db: database.db, store, sync, requireUser });

@@ -127,6 +127,9 @@ Run from the repository root.
 - **Offline editing**: a board opened online keeps a copy in the browser (IndexedDB, per user). Edits
   made offline survive a reload, the app opens offline through a service worker, and changes merge
   with other people's on reconnect. See [docs/offline.md](docs/offline.md).
+- **Import and export**: PNG, SVG and versioned JSON export of the whole board, the selection or a
+  region, and JSON import as a new board, with strict validation and size limits. See
+  [docs/import-export.md](docs/import-export.md).
 - **Live presence**: remote cursors in world coordinates, participant names and colours, remote
   selection outlines, a participant list and connection status in the toolbar. Presence is
   ephemeral and never stored. See [docs/presence.md](docs/presence.md).

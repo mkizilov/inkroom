@@ -3,6 +3,7 @@ import { boardRoleSchema, type BoardRole, type Point, type TextObject } from '@i
 import { LocalBoard } from '../offline/local-board';
 import type { LocalStore } from '../offline/local-store';
 import { CanvasScene } from './CanvasScene';
+import { ExportPanel } from './ExportPanel';
 import { TOOL_SHORTCUTS, type EditorAction } from './editor';
 import { PresenceOverlay } from './presence/PresenceOverlay';
 import { PresenceController, type PresenceUserInfo } from './presence/presence-controller';
@@ -114,11 +115,14 @@ function pinchFrom(points: Point[]): PinchSample | null {
 
 export function CanvasEditor({
   boardId,
+  title,
   user,
   role,
   offline,
 }: {
   boardId?: string;
+  // The board's title, used for the names of exported files.
+  title?: string;
   user?: PresenceUserInfo;
   role?: BoardRole;
   // Where this user's copy of the board is kept. Without it the board works online only.
@@ -136,6 +140,7 @@ export function CanvasEditor({
   const [currentRole, setCurrentRole] = useState<BoardRole | undefined>(role);
   const readOnly = currentRole === 'viewer';
   const [notice, setNotice] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   const presenceRef = useRef<PresenceController | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const pointersRef = useRef(new Map<number, Point>());
@@ -428,6 +433,7 @@ export function CanvasEditor({
         connection={connection}
         readOnly={readOnly}
         notice={notice}
+        onExport={() => setExporting((open) => !open)}
         onToolChange={(tool) => dispatch({ type: 'setTool', tool })}
         onZoomIn={() => dispatch({ type: 'zoom', factor: ZOOM_STEP, anchor: center })}
         onZoomOut={() => dispatch({ type: 'zoom', factor: 1 / ZOOM_STEP, anchor: center })}
@@ -439,6 +445,14 @@ export function CanvasEditor({
         onSendBackward={() => dispatch({ type: 'reorder', direction: 'backward' })}
         onDelete={() => dispatch({ type: 'deleteSelected' })}
       />
+      {exporting && (
+        <ExportPanel
+          title={title ?? 'Whiteboard'}
+          objects={state.objects}
+          selectedIds={state.selectedIds}
+          onClose={() => setExporting(false)}
+        />
+      )}
       <div className="canvas-shell">
         <div
           ref={surfaceRef}

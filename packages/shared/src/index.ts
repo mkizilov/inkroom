@@ -1,5 +1,6 @@
 export * from './auth';
 export * from './boards';
+export * from './board-export';
 export * from './canvas';
 export * from './canvas-operations';
 export * from './sync-protocol';

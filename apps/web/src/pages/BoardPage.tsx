@@ -102,6 +102,7 @@ export function BoardPage() {
           <section aria-label="Whiteboard" className="workspace">
             <CanvasEditor
               boardId={state.board.id}
+              title={state.board.title}
               role={state.board.role}
               offline={store && userId ? { store, userId } : undefined}
               user={

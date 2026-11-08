@@ -1,4 +1,10 @@
-import { boardPageSchema, boardResponseSchema, type Board, type BoardPage } from '@inkroom/shared';
+import {
+  boardPageSchema,
+  boardResponseSchema,
+  type Board,
+  type BoardExport,
+  type BoardPage,
+} from '@inkroom/shared';
 import { apiRequest } from '../api/client';
 
 export async function fetchBoardPage(cursor?: string): Promise<BoardPage> {
@@ -12,6 +18,12 @@ export async function fetchBoard(boardId: string): Promise<Board> {
 
 export async function createBoard(title: string): Promise<Board> {
   const payload = await apiRequest('/api/boards', { method: 'POST', body: { title } });
+  return boardResponseSchema.parse(payload).board;
+}
+
+// Creates a board from an export. The server checks the file again before it creates anything.
+export async function importBoard(document: BoardExport): Promise<Board> {
+  const payload = await apiRequest('/api/boards/import', { method: 'POST', body: document });
   return boardResponseSchema.parse(payload).board;
 }
 

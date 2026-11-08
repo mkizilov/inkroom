@@ -39,6 +39,7 @@ interface ToolbarProps {
   connection: ConnectionDisplay;
   readOnly: boolean;
   notice: string | null;
+  onExport: () => void;
   onToolChange: (tool: Tool) => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -62,6 +63,7 @@ export function Toolbar({
   connection,
   readOnly,
   notice,
+  onExport,
   onToolChange,
   onZoomIn,
   onZoomOut,
@@ -144,6 +146,9 @@ export function Toolbar({
         </button>
         <button type="button" onClick={onDelete} disabled={readOnly || !canEditSelection}>
           Delete selected
+        </button>
+        <button type="button" onClick={onExport}>
+          Export
         </button>
         <p role="status" aria-label="Canvas status" className="canvas-status">
           {status}

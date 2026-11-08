@@ -74,6 +74,13 @@ export function writeObject(objects: ObjectsMap, object: CanvasObject): void {
   }
 }
 
+// Writes an object at a known position in the z-order. A board built from a list in one pass (an
+// import) already knows every position, so this skips the reordering that writeOperations does.
+export function appendObject(objects: ObjectsMap, object: CanvasObject, index: number): void {
+  writeObject(objects, object);
+  objects.get(object.id)?.set(ORDER_FIELD, index);
+}
+
 // Converts one entry back to the typed model. Returns null if the entry is not a valid object,
 // so a malformed remote entry cannot crash the editor.
 export function readObject(id: string, map: ObjectMap): CanvasObject | null {
