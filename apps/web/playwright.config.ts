@@ -26,9 +26,21 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: 'pnpm --filter @inkroom/api dev',
+      // Runs the API from source with no file watcher and no .env file. Node's watch mode fails on
+      // Linux when the .env file it watches is missing. DATABASE_URL comes from the environment, or
+      // defaults to the loopback value in .env.example. WEB_ORIGIN and COOKIE_SECURE are fixed, because
+      // the browser runs over plain HTTP on that origin.
+      command: 'pnpm --filter @inkroom/api serve',
+      env: {
+        DATABASE_URL:
+          process.env.DATABASE_URL ?? 'postgres://inkroom:inkroom@127.0.0.1:21432/inkroom',
+        WEB_ORIGIN: webOrigin,
+        COOKIE_SECURE: 'false',
+      },
       url: apiHealthUrl,
       reuseExistingServer: reuseServers,
+      // SIGTERM lets the API close its sync rooms and database pool before the port is released.
+      gracefulShutdown: { signal: 'SIGTERM', timeout: 10_000 },
       timeout: 120_000,
     },
     {

@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/server.ts",
+    "serve": "node --import tsx src/server.ts",
     "build": "tsup",
     "start": "node dist/server.js",
     "migrate": "node dist/migrate.js",
