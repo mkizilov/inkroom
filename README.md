@@ -185,8 +185,11 @@ pnpm --filter @inkroom/web exec playwright install chromium
 pnpm test:e2e
 ```
 
-The browser tests expect `WEB_ORIGIN=http://127.0.0.1:21173` and cookies that are not `Secure`. Those
-are the defaults outside production and the values in `.env.example`. CI sets them for the browser job.
+The browser tests start the API with `pnpm --filter @inkroom/api serve`, which runs the source without a
+file watcher, and they start the web app themselves. The API reads its settings from the environment
+only, not from `.env`. The Playwright config sets `WEB_ORIGIN=http://127.0.0.1:21173` and
+`COOKIE_SECURE=false`, because the browser runs over plain HTTP. `DATABASE_URL` comes from the
+environment, or defaults to the value in `.env.example`. CI sets it for the browser job.
 
 ## Continuous integration
 

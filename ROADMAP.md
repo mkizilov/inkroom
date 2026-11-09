@@ -80,6 +80,12 @@ which matches `.nvmrc`. Dependencies came from the registry through the project'
 - The git history contains a personal absolute path, `/Users/mk-rune/...`, in `AGENTS.md` from commit
   `10e6b08`. Commit `37a053a` removed it from the working tree, but it remains in history. See step 1.
 - No GitHub repository has been created and nothing has been pushed. The parent orchestrator publishes.
+- Hosted CI run 42554215427 (commit `52250a6`) reported one error, in its browser job, and no error in the
+  other four jobs. The browser job failed before any test ran, because Playwright could not start the API.
+  On Linux, Node 22's watch mode watches the `.env` file itself, and the file is absent on a fresh checkout.
+  The browser job now starts the API with `pnpm --filter @inkroom/api serve`, which has no watcher and reads
+  only the environment. The fix was verified locally in a minimal CI-like environment on macOS only. Hosted
+  verification is the parent's. See step 24.
 
 ## 1. Decide how to handle the personal path in the public history
 
@@ -340,9 +346,23 @@ which matches `.nvmrc`. Dependencies came from the registry through the project'
   the link and table checks pass.
 - **Effort:** 1 to 2 hours.
 
+## 24. Stop `pnpm dev` from failing on Linux when `.env` is absent
+
+- **Scope:** `apps/api/package.json` runs `node --env-file-if-exists=../../.env --import tsx --watch`. On Linux,
+  Node 22's watch mode watches the env file itself, so a missing `.env` ends the process with ENOENT. Replace
+  the watcher with one that does not watch the env file (for example `tsx watch`), keep the optional `.env`,
+  and check the result on Linux.
+- **Rationale:** the README's setup copies `.env.example` first, so the failure is avoidable, but the flag's
+  promise of an optional file does not hold on Linux. The browser job no longer uses this script, so the
+  change is only for developers.
+- **Dependencies:** none. The browser job is already independent of this script.
+- **Acceptance criteria:** `pnpm dev` starts on a Linux checkout with no `.env` and with one, and it restarts on
+  a source change.
+- **Effort:** 1 to 2 hours.
+
 ## Total estimate
 
-The step estimates sum to 129 to 208 hours. The ranges are:
+The step estimates sum to 130 to 210 hours. The ranges are:
 
 - Steps 1 to 5 (verification gaps): 14 to 25 hours.
 - Steps 6 to 10 (correctness and security): 21 to 32 hours.
@@ -350,6 +370,7 @@ The step estimates sum to 129 to 208 hours. The ranges are:
 - Step 15 (bundle): 4 to 6 hours.
 - Step 16 (measurement-led optimization): 4 to 8 hours.
 - Steps 17 to 23 (operations, supply chain and documentation): 38 to 63 hours.
+- Step 24 (developer watcher on Linux): 1 to 2 hours.
 
 Assumptions:
 
