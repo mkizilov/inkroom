@@ -352,11 +352,6 @@ pnpm 9.15.4, PostgreSQL 16.15 on a local cluster, and Playwright 1.65.0 with Chr
 InkRoom is released under the [MIT License](LICENSE), copyright 2026 Mykyta Kizilov. Every package
 declares `"license": "MIT"`.
 
-The 96 production dependencies are MIT (85), ISC (7), BSD-3-Clause (3: `fast-uri`,
-`light-my-request`, `secure-json-parse`) and Apache-2.0 (1: `drizzle-orm`). No third-party source is
-copied into this repository. Each dependency keeps its license file in `node_modules`, and the API
-deployment keeps them too, so the notices travel with a binary release.
-
 ## Contributing
 
 Read [AGENTS.md](AGENTS.md) before making changes. It describes the architecture conventions, the
