@@ -86,6 +86,13 @@ which matches `.nvmrc`. Dependencies came from the registry through the project'
   The browser job now starts the API with `pnpm --filter @inkroom/api serve`, which has no watcher and reads
   only the environment. The fix was verified locally in a minimal CI-like environment on macOS only. Hosted
   verification is the parent's. See step 24.
+- Hosted CI run 42570870067 ran the full browser suite: 21 tests passed. The region export test failed on both
+  attempts, because its expectation omitted the arrow whose rounded tip touches the region's corner. The same
+  change also fixed a predicate defect: a diagonal line or pen was exported whenever its box overlapped the
+  region, even when the line itself did not reach it. Both are fixed locally (the expectation is corrected, and
+  region export now judges strokes by their drawn path). The local check ran the browser test's JSON through
+  the real builder with deep equality, and the browser test itself stops at the sandbox's download limit. The
+  hosted re-run is the parent's. See steps 25 to 27 for the follow-ups.
 
 ## 1. Decide how to handle the personal path in the public history
 
@@ -360,9 +367,44 @@ which matches `.nvmrc`. Dependencies came from the registry through the project'
   a source change.
 - **Effort:** 1 to 2 hours.
 
+## 25. Apply the stroke-aware rule to marquee selection
+
+- **Scope:** marquee selection still uses `objectsInRect`, which judges every object by its box. A marquee over
+  the empty box of a diagonal line selects the line, although the line does not reach the marquee. Decide that
+  selection uses the same rule as region export (`touchesRect`), then switch the marquee over and add a browser
+  test. The geometry benchmark's marquee row compares against the old box rule and must be updated with it.
+- **Rationale:** export and selection should agree about what lies inside a rectangle. They do not today.
+- **Dependencies:** none.
+- **Acceptance criteria:** a browser test shows a marquee over a diagonal stroke's empty box does not select it, and
+  the benchmark's equivalence check is updated to the new rule.
+- **Effort:** 2 to 3 hours.
+
+## 26. Decide the region rule for unfilled shapes
+
+- **Scope:** rectangles and ellipses are judged by their box. An unfilled shape that surrounds the region is
+  therefore exported, although its outline never reaches the region. Decide whether an outline counts. If it does,
+  judge unfilled rectangles by their outline and ellipses by a polygon approximation with a stated tolerance, and
+  keep filled shapes as they are.
+- **Rationale:** the region export is meant to contain exactly the objects that touch it. An unfilled frame is the
+  largest remaining case where it does not.
+- **Dependencies:** step 25, so selection and export use one rule.
+- **Acceptance criteria:** a unit test leaves out an unfilled frame around the region and keeps a filled rectangle
+  around it, and `docs/import-export.md` describes the rule.
+- **Effort:** 3 to 5 hours.
+
+## 27. Make arrow ends match between the canvas and the export
+
+- **Scope:** the canvas draws an arrow's shaft with Konva's default flat end. Lines, pens and export arrows use round
+  ends. Set the round cap on the canvas arrow, and remove the limitation about arrow ends in `docs/import-export.md`.
+- **Rationale:** the picture on screen and the exported file should match, and a region can differ at an arrow's tip
+  today.
+- **Dependencies:** none. A visual comparison in a browser is needed.
+- **Acceptance criteria:** a screenshot of an arrow tip at 1x matches the export's, and the limitation is gone.
+- **Effort:** 1 to 2 hours.
+
 ## Total estimate
 
-The step estimates sum to 130 to 210 hours. The ranges are:
+The step estimates sum to 136 to 220 hours. The ranges are:
 
 - Steps 1 to 5 (verification gaps): 14 to 25 hours.
 - Steps 6 to 10 (correctness and security): 21 to 32 hours.
@@ -371,6 +413,7 @@ The step estimates sum to 130 to 210 hours. The ranges are:
 - Step 16 (measurement-led optimization): 4 to 8 hours.
 - Steps 17 to 23 (operations, supply chain and documentation): 38 to 63 hours.
 - Step 24 (developer watcher on Linux): 1 to 2 hours.
+- Steps 25 to 27 (region and selection rules, arrow ends): 6 to 10 hours.
 
 Assumptions:
 

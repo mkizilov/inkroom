@@ -201,8 +201,12 @@ test('a region export keeps the region and only the objects that touch it', asyn
       objects: Array<{ id: string }>;
     };
     expect(exported.region).toEqual({ x: 280, y: 40, width: 200, height: 120 });
-    expect(exported.objects.map((object) => object.id)).toEqual([id(2)]);
+    // The ellipse lies inside the region. The arrow ends at (280, 160), the region's bottom-left corner,
+    // and its round end reaches 1 unit past that point, so its drawing touches the region. The other
+    // objects lie outside it. The geometry is covered by apps/web/src/export/regions.test.ts.
+    expect(exported.objects.map((object) => object.id)).toEqual([id(2), id(3)]);
     expect(exported.objects[0]).toEqual(representative.objects[1]);
+    expect(exported.objects[1]).toEqual(representative.objects[2]);
   } finally {
     await context.close();
   }
