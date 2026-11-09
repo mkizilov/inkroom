@@ -9,6 +9,7 @@ import {
   objectsInRect,
   pickObject,
   rectsIntersect,
+  touchesRect,
 } from './geometry';
 
 const style = { stroke: '#000000', strokeWidth: 2 };
@@ -160,5 +161,92 @@ describe('selection queries', () => {
   it('selects objects whose bounds touch the marquee', () => {
     const hits = objectsInRect([rect, ellipse, text], { x: -10, y: -10, width: 150, height: 150 });
     expect(hits.map((object) => object.id)).toEqual([id('1')]);
+  });
+});
+
+describe('touchesRect', () => {
+  const line = (dx: number, dy: number, strokeWidth = 2): CanvasObject => ({
+    id: id('a'),
+    type: 'line',
+    x: 0,
+    y: 0,
+    dx,
+    dy,
+    stroke: '#000000',
+    strokeWidth,
+  });
+
+  it('counts a stroke that comes within half its width of the rectangle, and not one beyond', () => {
+    // A horizontal line at y 50 with width 2 reaches y 51.
+    const onEdge = { x: 0, y: 51, width: 10, height: 10 };
+    const justBeyond = { x: 0, y: 51.01, width: 10, height: 10 };
+
+    expect(touchesRect(line(100, 0), onEdge)).toBe(false);
+    expect(touchesRect({ ...line(100, 0), y: 50 }, onEdge)).toBe(true);
+    expect(touchesRect({ ...line(100, 0), y: 50 }, justBeyond)).toBe(false);
+  });
+
+  it('counts the rounded end of an arrow, which reaches half its width past the tip', () => {
+    // The arrow from (60, 220) to (280, 160) ends at (280, 160). Its round end reaches x 281 at
+    // that height, and no further.
+    const arrow: CanvasObject = {
+      id: id('b'),
+      type: 'arrow',
+      x: 60,
+      y: 220,
+      dx: 220,
+      dy: -60,
+      stroke: '#000000',
+      strokeWidth: 2,
+    };
+    const reaches = { x: 281, y: 40, width: 199, height: 120 };
+    const misses = { x: 281.01, y: 40, width: 199, height: 120 };
+
+    expect(touchesRect(arrow, reaches)).toBe(true);
+    expect(touchesRect(arrow, misses)).toBe(false);
+  });
+
+  it('counts an arrowhead through its filled interior, even when its edges miss the rectangle', () => {
+    // The head of this arrow is the triangle (100, 0), (90, 5), (90, -5). The rectangle from y 1.5 to
+    // 2.5 lies inside it, so no edge of the head reaches it, and the shaft (y 0, width 2) misses it too.
+    // The rectangle from y 4.5 to 5.5 lies outside: the head's upper edge is at y 4 when x is 92.
+    const arrow: CanvasObject = {
+      id: id('c'),
+      type: 'arrow',
+      x: 0,
+      y: 0,
+      dx: 100,
+      dy: 0,
+      stroke: '#000000',
+      strokeWidth: 2,
+    };
+
+    expect(touchesRect(arrow, { x: 92, y: 1.5, width: 1, height: 1 })).toBe(true);
+    expect(touchesRect(arrow, { x: 92, y: 4.5, width: 1, height: 1 })).toBe(false);
+  });
+
+  it('leaves out a diagonal pen stroke whose box overlaps the rectangle but whose path does not', () => {
+    const pen: CanvasObject = {
+      id: id('d'),
+      type: 'pen',
+      x: 0,
+      y: 0,
+      points: [
+        { x: 0, y: 0 },
+        { x: 100, y: 100 },
+      ],
+      stroke: '#000000',
+      strokeWidth: 2,
+    };
+
+    expect(touchesRect(pen, { x: 90, y: 0, width: 50, height: 10 })).toBe(false);
+    expect(touchesRect(pen, { x: 40, y: 40, width: 10, height: 10 })).toBe(true);
+  });
+
+  it('judges shapes by their box, with the edges included', () => {
+    const box = { ...rect, x: 0, y: 0 };
+
+    expect(touchesRect(box, { x: 100, y: 0, width: 10, height: 10 })).toBe(true);
+    expect(touchesRect(box, { x: 100.5, y: 0, width: 10, height: 10 })).toBe(false);
   });
 });

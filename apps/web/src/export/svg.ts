@@ -1,7 +1,6 @@
 import type { CanvasObject, Region, TextObject } from '@inkroom/shared';
+import { arrowHeadCorners } from '../canvas/geometry';
 
-// The arrowhead is 10 units long and 10 units wide, as the scene draws it.
-const ARROW_HEAD = 10;
 const BACKGROUND = '#ffffff';
 const FONT_FAMILY = 'sans-serif';
 
@@ -34,31 +33,6 @@ function lineMarkup(
   style: { stroke: string; strokeWidth: number },
 ): string {
   return `<line x1="${num(x1)}" y1="${num(y1)}" x2="${num(x2)}" y2="${num(y2)}" fill="none" ${strokeAttributes(style)} stroke-linecap="round"/>`;
-}
-
-// The three corners of the arrowhead at the end point, or null for an arrow with no length.
-function arrowHeadPoints(
-  startX: number,
-  startY: number,
-  endX: number,
-  endY: number,
-): string | null {
-  const length = Math.hypot(endX - startX, endY - startY);
-  if (length === 0) {
-    return null;
-  }
-  const ux = (endX - startX) / length;
-  const uy = (endY - startY) / length;
-  const baseX = endX - ux * ARROW_HEAD;
-  const baseY = endY - uy * ARROW_HEAD;
-  const sideX = (-uy * ARROW_HEAD) / 2;
-  const sideY = (ux * ARROW_HEAD) / 2;
-  const corners: Array<[number, number]> = [
-    [endX, endY],
-    [baseX + sideX, baseY + sideY],
-    [baseX - sideX, baseY - sideY],
-  ];
-  return corners.map(([x, y]) => `${num(x)},${num(y)}`).join(' ');
 }
 
 // SVG has no line breaks inside a text element, so each line is a tspan. Lines are spaced by the font
@@ -98,9 +72,12 @@ function markup(object: CanvasObject): string[] {
       const endX = object.x + object.dx;
       const endY = object.y + object.dy;
       const lines = [lineMarkup(object.x, object.y, endX, endY, object)];
-      const head = arrowHeadPoints(object.x, object.y, endX, endY);
+      const head = arrowHeadCorners({ x: object.x, y: object.y }, { x: endX, y: endY });
       if (head !== null) {
-        lines.push(`<polygon points="${head}" fill="${escapeXml(object.stroke)}" stroke="none"/>`);
+        const points = head.map((point) => `${num(point.x)},${num(point.y)}`).join(' ');
+        lines.push(
+          `<polygon points="${points}" fill="${escapeXml(object.stroke)}" stroke="none"/>`,
+        );
       }
       return lines;
     }

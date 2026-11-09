@@ -1,5 +1,5 @@
 import type { CanvasObject, Region } from '@inkroom/shared';
-import { objectBounds, objectsInRect, type Rect } from '../canvas/geometry';
+import { objectBounds, touchesRect, type Rect } from '../canvas/geometry';
 
 // What an export covers: the whole board, the selected objects, or a region in board units.
 export type ExportScope = 'board' | 'selection' | 'region';
@@ -60,7 +60,11 @@ export function selectForExport(
   region: Region,
 ): ExportSelection {
   if (scope === 'region') {
-    return { objects: objectsInRect(objects, region), viewport: region, recordedRegion: region };
+    return {
+      objects: objects.filter((object) => touchesRect(object, region)),
+      viewport: region,
+      recordedRegion: region,
+    };
   }
   if (scope === 'selection') {
     const chosen = new Set(selectedIds);

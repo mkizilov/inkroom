@@ -13,7 +13,10 @@ Use **Export** on the board page. The panel offers three scopes:
 - **Selected objects** exports the objects selected on the canvas, with the same margin. It is
   enabled only when something is selected.
 - **Region** exports the objects that touch a rectangle given in board units (X, Y, Width, Height).
-  Each object that touches the region is exported whole, so nothing is cut in the file.
+  A line, arrow or pen touches it when its drawn stroke reaches it: the stroke has round ends, so it
+  reaches every point within half its width of its path, and an arrowhead counts as its filled triangle.
+  A rectangle, ellipse or text touches it when its box does. Each object that touches the region is
+  exported whole, so nothing is cut in the file.
 
 Each scope can be downloaded as JSON, SVG or PNG. The PNG scale (1×, 2× or 3×) applies to PNG only.
 Files are named after the board title and the scope, such as `sprint-4-region.svg`.
@@ -113,6 +116,11 @@ export can be imported again.
 
 ## Limitations
 
+- **Region edges for shapes.** A rectangle or ellipse is judged by its box, so an unfilled shape that
+  surrounds the region is exported even though its outline does not reach the region. Strokes are
+  judged by their drawn path, as described above.
+- **Arrow ends.** The canvas draws an arrow's shaft with a flat end, and the export draws it with a round
+  end. A region can therefore differ at an arrow's tip by up to half the stroke width.
 - **Text.** SVG and PNG draw text with the viewer's `sans-serif` font, at the same size and with lines
   spaced by the font size. Glyph widths can differ slightly from the canvas. A text object's bounds
   for selection and for a region are estimated from its character count, so a region export can
